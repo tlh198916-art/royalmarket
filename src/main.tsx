@@ -1,5 +1,6 @@
 import { Toaster } from "@/components/ui/sonner";
 import { RequireAuth } from "@/components/RequireAuth";
+import { CartProvider } from "@/lib/cart";
 import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
@@ -13,6 +14,17 @@ const Landing = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
+const Catalog = lazy(() => import("./pages/Catalog.tsx"));
+const ProductDetail = lazy(() => import("./pages/ProductDetail.tsx"));
+const SellerProfile = lazy(() => import("./pages/SellerProfile.tsx"));
+const SellLanding = lazy(() => import("./pages/SellLanding.tsx"));
+const ListingForm = lazy(() => import("./pages/ListingForm.tsx"));
+const SellerDashboard = lazy(() => import("./pages/SellerDashboard.tsx"));
+const Checkout = lazy(() => import("./pages/Checkout.tsx"));
+const Orders = lazy(() => import("./pages/Orders.tsx"));
+const Favorites = lazy(() => import("./pages/Favorites.tsx"));
+const Admin = lazy(() => import("./pages/Admin.tsx"));
+const Support = lazy(() => import("./pages/Support.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -116,24 +128,104 @@ createRoot(document.getElementById("root")!).render(
       <ConvexAuthProvider client={convex}>
         <BrowserRouter>
           <RouteSyncer />
-          <Suspense fallback={<RouteLoading />}>
-            <Routes>
-              <Route path="/" element={<Landing />} />
-              <Route
-                path="/auth"
-                element={<AuthPage redirectAfterAuth="/dashboard" />}
-              />
-              <Route
-                path="/dashboard"
-                element={
-                  <RequireAuth>
-                    <Dashboard />
-                  </RequireAuth>
-                }
-              />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
+          <CartProvider>
+            <Suspense fallback={<RouteLoading />}>
+              <Routes>
+                {/* Public storefront */}
+                <Route path="/" element={<Landing />} />
+                <Route path="/products" element={<Catalog />} />
+                <Route path="/products/:id" element={<ProductDetail />} />
+                <Route path="/sellers/:userId" element={<SellerProfile />} />
+                <Route path="/sell" element={<SellLanding />} />
+                <Route path="/support" element={<Support />} />
+                <Route
+                  path="/auth"
+                  element={<AuthPage redirectAfterAuth="/dashboard" />}
+                />
+
+                {/* Protected — buyer & seller tooling */}
+                <Route
+                  path="/dashboard"
+                  element={
+                    <RequireAuth
+                      title="Sign in to view your account"
+                      description="Your orders, favorites, and preferences live here."
+                    >
+                      <Dashboard />
+                    </RequireAuth>
+                  }
+                />
+                <Route
+                  path="/orders"
+                  element={
+                    <RequireAuth
+                      title="Sign in to see your orders"
+                      description="Order history is private to your verified account."
+                    >
+                      <Orders />
+                    </RequireAuth>
+                  }
+                />
+                <Route
+                  path="/favorites"
+                  element={
+                    <RequireAuth
+                      title="Sign in to view favorites"
+                      description="Your saved items are tied to your account."
+                    >
+                      <Favorites />
+                    </RequireAuth>
+                  }
+                />
+                <Route
+                  path="/checkout"
+                  element={
+                    <RequireAuth
+                      title="Sign in to check out"
+                      description="Checkout requires a verified account so sellers know buyers are real."
+                    >
+                      <Checkout />
+                    </RequireAuth>
+                  }
+                />
+                <Route
+                  path="/sell/new"
+                  element={
+                    <RequireAuth
+                      title="Sign in to create a listing"
+                      description="Selling requires a verified account — it's free to post."
+                    >
+                      <ListingForm />
+                    </RequireAuth>
+                  }
+                />
+                <Route
+                  path="/sell/dashboard"
+                  element={
+                    <RequireAuth
+                      title="Sign in to manage your shop"
+                      description="Your listings, orders, and shop profile live in the seller dashboard."
+                    >
+                      <SellerDashboard />
+                    </RequireAuth>
+                  }
+                />
+                <Route
+                  path="/admin"
+                  element={
+                    <RequireAuth
+                      title="Sign in to access admin"
+                      description="The admin dashboard is limited to administrator accounts."
+                    >
+                      <Admin />
+                    </RequireAuth>
+                  }
+                />
+
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </CartProvider>
         </BrowserRouter>
         <Toaster />
       </ConvexAuthProvider>
