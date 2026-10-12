@@ -29,7 +29,7 @@ import {
   Store,
   Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
@@ -99,7 +99,25 @@ function validate(form: FormState): string | null {
 export default function ListingForm() {
   const [searchParams] = useSearchParams();
   const editId = searchParams.get("edit");
-  const { user, isLoading: authLoading } = useAuth();
+  const { isLoading: authLoading } = useAuth();
+  const myListings = useQuery(api.products.myListings);
+
+  if (authLoading || (editId && myListings === undefined)) {
+    return (
+      <Layout>
+        <div className="flex justify-center py-24">
+          <Loader2 className="size-7 animate-spin text-primary" />
+        </div>
+      </Layout>
+    );
+  }
+
+  // Remount per edit target so the form prefills fresh from the listing.
+  return <ListingFormInner key={editId ?? "new"} editId={editId} />;
+}
+
+function ListingFormInner({ editId }: { editId: string | null }) {
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   const myListings = useQuery(api.products.myListings);
@@ -114,39 +132,27 @@ export default function ListingForm() {
   const updateListing = useMutation(api.products.update);
   const generateUploadUrl = useMutation(api.products.generateUploadUrl);
 
-  const [form, setForm] = useState<FormState>(emptyForm);
+  const [form, setForm] = useState<FormState>(() => {
+    if (!existing) return emptyForm;
+    return {
+      title: existing.title,
+      description: existing.description ?? "",
+      categoryId: existing.categoryId,
+      condition: existing.condition ?? "good",
+      price: (existing.priceCents / 100).toFixed(2),
+      quantity: String(existing.quantity),
+      shippingFee: ((existing.shipping?.flatFeeCents ?? 0) / 100).toFixed(2),
+      shipsFrom: existing.shipping?.shipsFrom ?? "",
+      estimatedDays: String(existing.shipping?.estimatedDays ?? 5),
+      returnsAccepted: existing.returns?.accepted ?? false,
+      returnDays: String(existing.returns?.days ?? 14),
+    };
+  });
   const [photos, setPhotos] = useState<Photo[]>([]);
-  const [publish, setPublish] = useState(true);
-  const [shopStep, setShopStep] = useState(false);
+  const publish = existing ? existing.status === "active" : true;
+  const [shopStep, setShopStep] = useState(!user?.isSeller);
   const [submitting, setSubmitting] = useState(false);
   const [uploadingCount, setUploadingCount] = useState(0);
-
-  // Shop setup step for first-time sellers.
-  useEffect(() => {
-    if (authLoading || !user) return;
-    if (!user.isSeller) setShopStep(true);
-  }, [user, authLoading]);
-
-  // Prefill when editing an existing listing.
-  useEffect(() => {
-    if (!editId || !myListings) return;
-    const product = myListings.find((p) => p._id === editId);
-    if (!product) return;
-    setForm({
-      title: product.title,
-      description: product.description ?? "",
-      categoryId: product.categoryId,
-      condition: product.condition ?? "good",
-      price: (product.priceCents / 100).toFixed(2),
-      quantity: String(product.quantity),
-      shippingFee: ((product.shipping?.flatFeeCents ?? 0) / 100).toFixed(2),
-      shipsFrom: product.shipping?.shipsFrom ?? "",
-      estimatedDays: String(product.shipping?.estimatedDays ?? 5),
-      returnsAccepted: product.returns?.accepted ?? false,
-      returnDays: String(product.returns?.days ?? 14),
-    });
-    setPublish(product.status === "active");
-  }, [editId, myListings]);
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -298,16 +304,6 @@ export default function ListingForm() {
       setSubmitting(false);
     }
   };
-
-  if (authLoading || (editId && myListings === undefined)) {
-    return (
-      <Layout>
-        <div className="flex justify-center py-24">
-          <Loader2 className="size-7 animate-spin text-primary" />
-        </div>
-      </Layout>
-    );
-  }
 
   if (editId && !existing && myListings !== undefined) {
     return (
