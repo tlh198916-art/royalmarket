@@ -105,7 +105,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                   <div className="flex justify-center">
                     <img
                       src={logo}
-                      alt="Royal Market"
+                      alt="TLHmarketplacepro"
                       width={64}
                       height={64}
                       className="rounded-lg mb-4 mt-4 cursor-pointer"

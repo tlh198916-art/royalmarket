@@ -147,7 +147,7 @@ export const draftListing = action({
     const category = CATEGORIES.find((c) => c.id === args.categoryId);
     const condition = (args.condition ?? "good").replace("_", " ");
     const prompt = [
-      "You are the listing copy assistant for a secondhand marketplace.",
+      "You are the listing copy assistant for TLHmarketplacepro, a secondhand marketplace.",
       "Write an honest, appealing draft from the seller's inputs.",
       "",
       `Working title (may be empty): ${args.title?.trim().slice(0, 120) || "(none)"}`,

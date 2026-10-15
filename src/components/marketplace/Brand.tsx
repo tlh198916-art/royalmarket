@@ -1,7 +1,7 @@
 import { Crown } from "lucide-react";
 import { Link } from "react-router";
 
-/** Royal Market wordmark + crown tile. Always links home. */
+/** TLHmarketplacepro wordmark + crown tile. Always links home. */
 export function Brand({
   className = "",
   size = "md",
@@ -23,7 +23,7 @@ export function Brand({
     <Link
       to="/"
       className={`group flex items-center gap-2.5 ${className}`}
-      aria-label="Royal Market home"
+      aria-label="TLHmarketplacepro home"
     >
       <span
         className={`flex ${tile} items-center justify-center bg-primary text-primary-foreground transition-transform duration-200 group-hover:-rotate-6 group-hover:scale-105`}
@@ -31,7 +31,7 @@ export function Brand({
         <Crown className={icon} />
       </span>
       <span className={`${text} font-bold tracking-tight text-foreground`}>
-        Royal<span className="text-primary">Market</span>
+        TLH<span className="text-primary">marketplacepro</span>
       </span>
     </Link>
   );

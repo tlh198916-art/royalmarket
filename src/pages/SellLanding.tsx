@@ -64,7 +64,7 @@ const faqs = [
   },
   {
     q: "What does it cost to sell?",
-    a: "Nothing today: $0 to list, $0 to keep your shop open, and 0% commission on sales during launch. If online card payments are switched on later, standard payment-processing fees would be passed through at cost with advance notice — you'd still never pay a Royal Market listing fee.",
+    a: "Nothing today: $0 to list, $0 to keep your shop open, and 0% commission on sales during launch. If online card payments are switched on later, standard payment-processing fees would be passed through at cost with advance notice — you'd still never pay a TLHmarketplacepro listing fee.",
   },
   {
     q: "How do I receive payment?",
@@ -72,7 +72,7 @@ const faqs = [
   },
   {
     q: "Who pays for shipping?",
-    a: "There are no shipping fees on Royal Market. You and the buyer arrange shipping or a meet-up yourselves — propose the terms from your orders page, and both of you approve the deal before handoff.",
+    a: "There are no shipping fees on TLHmarketplacepro. You and the buyer arrange shipping or a meet-up yourselves — propose the terms from your orders page, and both of you approve the deal before handoff.",
   },
   {
     q: "Can buyers return an item?",
@@ -112,7 +112,7 @@ export default function SellLanding() {
               <span className="text-royal-gradient">income</span>
             </h1>
             <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-muted-foreground">
-              Royal Market is free to post on. Set up a verified shop in
+              TLHmarketplacepro is free to post on. Set up a verified shop in
               minutes, publish listings with photos and live inventory, and
               manage every order from one dashboard.
             </p>
