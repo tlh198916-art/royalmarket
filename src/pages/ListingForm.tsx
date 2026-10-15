@@ -57,9 +57,6 @@ type FormState = {
   condition: string;
   price: string;
   quantity: string;
-  shippingFee: string;
-  shipsFrom: string;
-  estimatedDays: string;
   returnsAccepted: boolean;
   returnDays: string;
 };
@@ -71,9 +68,6 @@ const emptyForm: FormState = {
   condition: "good",
   price: "",
   quantity: "1",
-  shippingFee: "0",
-  shipsFrom: "",
-  estimatedDays: "5",
   returnsAccepted: false,
   returnDays: "14",
 };
@@ -92,12 +86,6 @@ function validate(form: FormState): string | null {
   const quantity = Number(form.quantity);
   if (!Number.isInteger(quantity) || quantity < 0)
     return "Inventory must be a whole number of 0 or more.";
-  const fee = parsePriceToCents(form.shippingFee || "0");
-  if (fee === null || fee > 100_000)
-    return "Shipping fee must be between $0 and $1,000.";
-  const days = Number(form.estimatedDays);
-  if (!Number.isInteger(days) || days < 1 || days > 90)
-    return "Estimated shipping must be 1–90 days.";
   if (form.returnsAccepted) {
     const returnDays = Number(form.returnDays);
     if (!Number.isInteger(returnDays) || returnDays < 1 || returnDays > 90)
@@ -151,9 +139,6 @@ function ListingFormInner({ editId }: { editId: string | null }) {
       condition: existing.condition ?? "good",
       price: (existing.priceCents / 100).toFixed(2),
       quantity: String(existing.quantity),
-      shippingFee: ((existing.shipping?.flatFeeCents ?? 0) / 100).toFixed(2),
-      shipsFrom: existing.shipping?.shipsFrom ?? "",
-      estimatedDays: String(existing.shipping?.estimatedDays ?? 5),
       returnsAccepted: existing.returns?.accepted ?? false,
       returnDays: String(existing.returns?.days ?? 14),
     };
@@ -319,11 +304,6 @@ function ListingFormInner({ editId }: { editId: string | null }) {
       imageStorageIds: photos
         .map((photo) => photo.storageId)
         .filter((id): id is string => Boolean(id)),
-      shipping: {
-        flatFeeCents: parsePriceToCents(form.shippingFee || "0") ?? 0,
-        shipsFrom: form.shipsFrom.trim() || undefined,
-        estimatedDays: Number(form.estimatedDays),
-      },
       returns: {
         accepted: form.returnsAccepted,
         days: form.returnsAccepted ? Number(form.returnDays) : 0,
@@ -680,58 +660,15 @@ function ListingFormInner({ editId }: { editId: string | null }) {
               </div>
             </section>
 
-            {/* Shipping & returns */}
+            {/* Fulfillment & returns */}
             <section className="rounded-2xl border border-border/70 bg-card p-6 space-y-5">
               <h2 className="text-sm font-bold tracking-tight">
-                Shipping &amp; returns
+                Fulfillment &amp; returns
               </h2>
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="shippingFee">Flat shipping fee (USD)</Label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                      $
-                    </span>
-                    <Input
-                      id="shippingFee"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={form.shippingFee}
-                      onChange={(event) =>
-                        set("shippingFee", event.target.value)
-                      }
-                      className="pl-7"
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Charged once per order. 0 = free shipping.
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="estimatedDays">Dispatch time (days)</Label>
-                  <Input
-                    id="estimatedDays"
-                    type="number"
-                    min="1"
-                    max="90"
-                    step="1"
-                    value={form.estimatedDays}
-                    onChange={(event) =>
-                      set("estimatedDays", event.target.value)
-                    }
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="shipsFrom">Ships from</Label>
-                  <Input
-                    id="shipsFrom"
-                    maxLength={80}
-                    value={form.shipsFrom}
-                    onChange={(event) => set("shipsFrom", event.target.value)}
-                    placeholder="City, Country"
-                  />
-                </div>
+              <div className="rounded-xl border border-border/70 bg-background/40 px-4 py-3 text-xs leading-5 text-muted-foreground">
+                No shipping fields here — buyers and sellers arrange shipping
+                or a meet-up directly, and both approve the deal before
+                handoff.
               </div>
 
               <div className="flex items-center justify-between rounded-xl border border-border/70 bg-background/40 px-4 py-3">
@@ -815,10 +752,7 @@ function ListingFormInner({ editId }: { editId: string | null }) {
                 {formatPrice(priceCents)}
               </p>
               <p className="text-xs text-muted-foreground">
-                {(parsePriceToCents(form.shippingFee || "0") ?? 0) > 0
-                  ? `+ ${formatPrice(parsePriceToCents(form.shippingFee || "0") ?? 0)} shipping`
-                  : "Free shipping"}{" "}
-                · arrives ~{form.estimatedDays || "?"} days
+                Meet up or ship directly — agreed with the buyer
               </p>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 <Badge variant="outline" className="capitalize">

@@ -3,17 +3,19 @@ import { Layout } from "@/components/marketplace/Layout";
 import { ProductMedia } from "@/components/marketplace/ProductMedia";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
 import { formatDate, formatPrice } from "@/lib/format";
 import { useMutation, useQuery } from "convex/react";
 import {
   CheckCircle2,
-  MapPin,
+  Handshake,
   Package,
   ScrollText,
   Star,
   XCircle,
 } from "lucide-react";
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
@@ -51,6 +53,52 @@ export default function Orders() {
     }
   };
 
+  const approveDeal = useMutation(api.orders.approveFulfillment);
+  const proposeDeal = useMutation(api.orders.setFulfillment);
+  const [editKey, setEditKey] = useState<string | null>(null);
+  const [editMethod, setEditMethod] = useState<"meetup" | "shipping">(
+    "meetup",
+  );
+  const [editNote, setEditNote] = useState("");
+  const [savingDeal, setSavingDeal] = useState(false);
+
+  const handleApprove = async (orderId: string, sellerId: string) => {
+    try {
+      await approveDeal({
+        orderId: orderId as never,
+        sellerId: sellerId as never,
+      });
+      toast.success("You approved the arrangement.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not approve.",
+      );
+    }
+  };
+
+  const handlePropose = async (orderId: string, sellerId: string) => {
+    if (!editKey) return;
+    setSavingDeal(true);
+    try {
+      await proposeDeal({
+        orderId: orderId as never,
+        sellerId: sellerId as never,
+        method: editMethod,
+        note: editNote.trim() || undefined,
+      });
+      setEditKey(null);
+      toast.success(
+        "Proposal saved — the other party must approve the new terms.",
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not save the proposal.",
+      );
+    } finally {
+      setSavingDeal(false);
+    }
+  };
+
   return (
     <Layout>
       <div className="page-container py-8 sm:py-12">
@@ -67,8 +115,8 @@ export default function Orders() {
             <div className="text-sm">
               <p className="font-semibold">Order placed successfully</p>
               <p className="text-muted-foreground">
-                Pay on delivery — the seller is preparing your items. Track
-                status below.
+                Pay on delivery — agree on meet-up or shipping with the seller
+                below. Both of you approve the deal before handoff.
               </p>
             </div>
           </div>
@@ -215,24 +263,184 @@ export default function Orders() {
                       ))}
                     </div>
 
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-4">
-                      <p className="flex items-start gap-1.5 text-xs leading-5 text-muted-foreground">
-                        <MapPin className="mt-0.5 size-3.5 shrink-0" />
-                        {order.shippingAddress.fullName},{" "}
-                        {order.shippingAddress.line1},{" "}
-                        {order.shippingAddress.city},{" "}
-                        {order.shippingAddress.country} ·{" "}
-                        {order.shippingAddress.phone}
-                      </p>
-                      {order.status === "placed" && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => void handleCancel(order._id)}
-                        >
-                          <XCircle className="mr-1.5 size-3.5" /> Cancel order
-                        </Button>
+                    {/* Fulfillment agreement — both parties approve the deal */}
+                    <div className="mt-4 space-y-3 border-t border-border/70 pt-4">
+                      {(order.fulfillments ?? []).length === 0 && (
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          No fulfillment arrangement yet — coordinate a
+                          meet-up or shipping with the seller; you both
+                          approve it here before handoff.
+                        </p>
                       )}
+                      {(order.fulfillments ?? []).map((entry) => {
+                        const dealKey = `${order._id}:${entry.sellerId}`;
+                        const bothAgreed =
+                          entry.buyerAgreed && entry.sellerAgreed;
+                        return (
+                          <div
+                            key={dealKey}
+                            className="rounded-xl border border-border/70 bg-background/40 p-3.5"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="flex items-center gap-1.5 text-sm font-semibold">
+                                <Handshake className="size-4 text-primary" />
+                                {entry.method === "meetup"
+                                  ? "Meet up"
+                                  : "Shipping — arranged directly"}
+                                <span className="font-normal text-muted-foreground">
+                                  ·{" "}
+                                  {order.sellerNames?.[entry.sellerId] ??
+                                    "Seller"}
+                                </span>
+                              </p>
+                              {bothAgreed ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-emerald-400/40 text-emerald-400"
+                                >
+                                  Deal agreed
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant="outline"
+                                  className="text-muted-foreground"
+                                >
+                                  Awaiting approvals
+                                </Badge>
+                              )}
+                            </div>
+                            {entry.note && (
+                              <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                                {entry.note}
+                              </p>
+                            )}
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                              <span
+                                className={
+                                  entry.buyerAgreed
+                                    ? "font-medium text-emerald-400"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                Buyer{" "}
+                                {entry.buyerAgreed
+                                  ? "approved ✓"
+                                  : "not approved yet"}
+                              </span>
+                              <span
+                                className={
+                                  entry.sellerAgreed
+                                    ? "font-medium text-emerald-400"
+                                    : "text-muted-foreground"
+                                }
+                              >
+                                Seller{" "}
+                                {entry.sellerAgreed
+                                  ? "approved ✓"
+                                  : "not approved yet"}
+                              </span>
+                            </div>
+                            {order.status === "placed" && (
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                {!entry.buyerAgreed && (
+                                  <Button
+                                    size="sm"
+                                    onClick={() =>
+                                      void handleApprove(
+                                        order._id,
+                                        entry.sellerId,
+                                      )
+                                    }
+                                  >
+                                    Approve arrangement
+                                  </Button>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    if (editKey === dealKey) {
+                                      setEditKey(null);
+                                    } else {
+                                      setEditKey(dealKey);
+                                      setEditMethod(entry.method);
+                                      setEditNote(entry.note ?? "");
+                                    }
+                                  }}
+                                >
+                                  {editKey === dealKey ? "Close" : "Propose change"}
+                                </Button>
+                              </div>
+                            )}
+                            {editKey === dealKey && order.status === "placed" && (
+                              <div className="mt-3 space-y-2.5 rounded-xl border border-border/70 bg-card p-3">
+                                <div className="flex gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant={
+                                      editMethod === "meetup"
+                                        ? "default"
+                                        : "outline"
+                                    }
+                                    onClick={() => setEditMethod("meetup")}
+                                  >
+                                    Meet up
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant={
+                                      editMethod === "shipping"
+                                        ? "default"
+                                        : "outline"
+                                    }
+                                    onClick={() => setEditMethod("shipping")}
+                                  >
+                                    Shipping
+                                  </Button>
+                                </div>
+                                <Textarea
+                                  rows={2}
+                                  maxLength={500}
+                                  value={editNote}
+                                  onChange={(event) =>
+                                    setEditNote(event.target.value)
+                                  }
+                                  placeholder="Details — meeting spot, or shipping terms you both agree to"
+                                />
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-[11px] leading-4 text-muted-foreground">
+                                    Saving resets their approval — you both
+                                    approve the new terms.
+                                  </p>
+                                  <Button
+                                    size="sm"
+                                    disabled={savingDeal}
+                                    onClick={() =>
+                                      void handlePropose(
+                                        order._id,
+                                        entry.sellerId,
+                                      )
+                                    }
+                                  >
+                                    {savingDeal ? "Saving…" : "Send proposal"}
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <div className="flex justify-end">
+                        {order.status === "placed" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void handleCancel(order._id)}
+                          >
+                            <XCircle className="mr-1.5 size-3.5" /> Cancel order
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

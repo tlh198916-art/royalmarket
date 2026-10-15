@@ -29,11 +29,6 @@ export type ProductCardData = {
   views?: number;
   soldCount?: number;
   condition?: string;
-  shipping?: {
-    flatFeeCents: number;
-    shipsFrom?: string | null;
-    estimatedDays: number;
-  };
   returns?: { accepted: boolean; days: number };
   _creationTime?: number;
 };

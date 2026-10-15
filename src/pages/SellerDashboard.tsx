@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Eye,
+  Handshake,
   Package,
   PackageCheck,
   Pencil,
@@ -123,6 +124,48 @@ export default function SellerDashboard() {
       toast.error(
         error instanceof Error ? error.message : "Could not update order.",
       );
+    }
+  };
+
+  const approveDeal = useMutation(api.orders.approveFulfillment);
+  const proposeDeal = useMutation(api.orders.setFulfillment);
+  const [dealEditOrderId, setDealEditOrderId] = useState<string | null>(null);
+  const [dealEditMethod, setDealEditMethod] = useState<"meetup" | "shipping">(
+    "meetup",
+  );
+  const [dealEditNote, setDealEditNote] = useState("");
+  const [savingDeal, setSavingDeal] = useState(false);
+
+  const handleApproveDeal = async (orderId: string) => {
+    if (!user) return;
+    try {
+      await approveDeal({ orderId: orderId as never, sellerId: user._id });
+      toast.success("You approved the arrangement.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not approve.",
+      );
+    }
+  };
+
+  const handleProposeDeal = async (orderId: string) => {
+    if (!user) return;
+    setSavingDeal(true);
+    try {
+      await proposeDeal({
+        orderId: orderId as never,
+        sellerId: user._id,
+        method: dealEditMethod,
+        note: dealEditNote.trim() || undefined,
+      });
+      setDealEditOrderId(null);
+      toast.success("Proposal saved — the buyer must approve the new terms.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not save the proposal.",
+      );
+    } finally {
+      setSavingDeal(false);
     }
   };
 
@@ -402,7 +445,7 @@ export default function SellerDashboard() {
               <EmptyState
                 icon={Truck}
                 title="No orders yet"
-                description="When a buyer orders one of your listings, it appears here with their shipping details so you can dispatch it."
+                description="When a buyer orders one of your listings, it appears here so you can agree on meet-up or shipping with them, then dispatch it."
                 action={
                   <Button asChild variant="outline">
                     <Link to={`/sellers/${user._id}`}>
@@ -414,7 +457,11 @@ export default function SellerDashboard() {
               />
             ) : (
               <div className="space-y-4">
-                {sellerOrders.map((order) => (
+                {sellerOrders.map((order) => {
+                  const deal = order.fulfillments?.find(
+                    (f) => f.sellerId === user?._id,
+                  );
+                  return (
                   <div
                     key={order._id}
                     className="rounded-2xl border border-border/70 bg-card p-5"
@@ -424,8 +471,11 @@ export default function SellerDashboard() {
                         <p className="text-sm font-semibold">{order.buyerName}</p>
                         <p className="text-xs text-muted-foreground">
                           Ordered {formatDate(order.createdAt)} ·{" "}
-                          {order.shippingAddress.city},{" "}
-                          {order.shippingAddress.country}
+                          {deal
+                            ? deal.method === "meetup"
+                              ? "Meet up"
+                              : "Shipping — arranged directly"
+                            : "No arrangement yet"}
                         </p>
                       </div>
                       <Badge
@@ -515,23 +565,158 @@ export default function SellerDashboard() {
                       ))}
                     </div>
 
-                    <div className="mt-3 text-xs leading-5 text-muted-foreground">
-                      <p className="font-medium text-foreground">
-                        Ship to: {order.shippingAddress.fullName},{" "}
-                        {order.shippingAddress.line1}
-                        {order.shippingAddress.line2
-                          ? `, ${order.shippingAddress.line2}`
-                          : ""}
-                      </p>
-                      <p>
-                        {order.shippingAddress.city},{" "}
-                        {order.shippingAddress.region}{" "}
-                        {order.shippingAddress.postalCode} ·{" "}
-                        {order.shippingAddress.phone}
-                      </p>
+                    <div className="mt-4 rounded-xl border border-border/70 bg-background/40 p-3.5 text-xs leading-5">
+                      {deal ? (
+                        <>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="flex items-center gap-1.5 text-sm font-semibold">
+                              <Handshake className="size-4 text-primary" />
+                              {deal.method === "meetup"
+                                ? "Meet up"
+                                : "Shipping — arranged directly"}
+                            </p>
+                            {deal.buyerAgreed && deal.sellerAgreed ? (
+                              <Badge
+                                variant="outline"
+                                className="border-emerald-400/40 text-emerald-400"
+                              >
+                                Deal agreed
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                className="text-muted-foreground"
+                              >
+                                Awaiting approvals
+                              </Badge>
+                            )}
+                          </div>
+                          {deal.note && (
+                            <p className="mt-1.5 text-muted-foreground">
+                              {deal.note}
+                            </p>
+                          )}
+                          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                            <span
+                              className={
+                                deal.buyerAgreed
+                                  ? "font-medium text-emerald-400"
+                                  : "text-muted-foreground"
+                              }
+                            >
+                              Buyer{" "}
+                              {deal.buyerAgreed
+                                ? "approved ✓"
+                                : "not approved yet"}
+                            </span>
+                            <span
+                              className={
+                                deal.sellerAgreed
+                                  ? "font-medium text-emerald-400"
+                                  : "text-muted-foreground"
+                              }
+                            >
+                              You{" "}
+                              {deal.sellerAgreed
+                                ? "approved ✓"
+                                : "not approved yet"}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-muted-foreground">
+                          No arrangement yet — propose a meet-up or shipping
+                          terms for the buyer to approve.
+                        </p>
+                      )}
+                      {order.status === "placed" && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          {deal && !deal.sellerAgreed && (
+                            <Button
+                              size="sm"
+                              onClick={() => void handleApproveDeal(order._id)}
+                            >
+                              Approve arrangement
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              if (dealEditOrderId === order._id) {
+                                setDealEditOrderId(null);
+                              } else {
+                                setDealEditOrderId(order._id);
+                                setDealEditMethod(deal?.method ?? "meetup");
+                                setDealEditNote(deal?.note ?? "");
+                              }
+                            }}
+                          >
+                            {dealEditOrderId === order._id
+                              ? "Close"
+                              : deal
+                                ? "Propose change"
+                                : "Propose arrangement"}
+                          </Button>
+                        </div>
+                      )}
+                      {dealEditOrderId === order._id &&
+                        order.status === "placed" && (
+                          <div className="mt-3 space-y-2.5 rounded-xl border border-border/70 bg-card p-3">
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                variant={
+                                  dealEditMethod === "meetup"
+                                    ? "default"
+                                    : "outline"
+                                }
+                                onClick={() => setDealEditMethod("meetup")}
+                              >
+                                Meet up
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant={
+                                  dealEditMethod === "shipping"
+                                    ? "default"
+                                    : "outline"
+                                }
+                                onClick={() => setDealEditMethod("shipping")}
+                              >
+                                Shipping
+                              </Button>
+                            </div>
+                            <Textarea
+                              rows={2}
+                              maxLength={500}
+                              value={dealEditNote}
+                              onChange={(event) =>
+                                setDealEditNote(event.target.value)
+                              }
+                              placeholder="Meeting spot, or shipping terms you both agree to"
+                            />
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-[11px] text-muted-foreground">
+                                Saving resets the buyer&apos;s approval — you
+                                both approve the new terms.
+                              </p>
+                              <Button
+                                size="sm"
+                                disabled={savingDeal}
+                                onClick={() =>
+                                  void handleProposeDeal(order._id)
+                                }
+                              >
+                                {savingDeal ? "Saving…" : "Send proposal"}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </TabsContent>

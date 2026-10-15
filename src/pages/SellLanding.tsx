@@ -41,12 +41,12 @@ const steps = [
   {
     icon: Camera,
     title: "Publish your listing",
-    body: "Upload up to 8 photos, set price, inventory, shipping fee and return window. Save a draft or publish live immediately.",
+    body: "Upload up to 8 photos, set price, inventory and a return window. Save a draft or publish live immediately.",
   },
   {
     icon: PackageCheck,
     title: "Fulfil & get paid",
-    body: "Orders land in your seller dashboard. Mark items shipped and delivered — buyers pay on delivery until card checkout is configured.",
+    body: "Orders land in your dashboard. Agree on meet-up or shipping with the buyer — both approve — then mark items delivered.",
   },
 ];
 
@@ -68,11 +68,11 @@ const faqs = [
   },
   {
     q: "How do I receive payment?",
-    a: "Checkout currently runs on pay-on-delivery: the buyer pays when they receive the item, so you keep 100% of the sale plus any flat shipping fee you set. Card checkout will be enabled once a payment provider is configured — the order history and fulfilment flow already support it.",
+    a: "Checkout currently runs on pay-on-delivery: the buyer pays when they receive the item, so you keep 100% of the sale. Card checkout will be enabled once a payment provider is configured — the order history and fulfilment flow already support it.",
   },
   {
     q: "Who pays for shipping?",
-    a: "You set a flat shipping fee per listing (or $0 for free shipping). The fee is charged once per order per seller at checkout, and buyers see the estimated dispatch time you configure (1–90 days).",
+    a: "There are no shipping fees on Royal Market. You and the buyer arrange shipping or a meet-up yourselves — propose the terms from your orders page, and both of you approve the deal before handoff.",
   },
   {
     q: "Can buyers return an item?",
@@ -265,7 +265,7 @@ export default function SellLanding() {
               {
                 icon: Clock3,
                 title: "Live in minutes",
-                body: "Photo upload, title, price, stock, shipping — one form, one publish button.",
+                body: "Photo upload, title, price, stock, returns — one form, one publish button.",
               },
               {
                 icon: Eye,

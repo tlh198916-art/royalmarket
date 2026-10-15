@@ -1,33 +1,8 @@
 import { v } from "convex/values";
-import { shippingAddressValidator, type OrderStatus } from "./schema";
+import type { OrderStatus } from "./schema";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireUser, requireVerifiedUser } from "./lib";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-
-async function validateAddress(
-  address: {
-    fullName: string;
-    line1: string;
-    line2?: string;
-    city: string;
-    region: string;
-    postalCode: string;
-    country: string;
-    phone: string;
-  },
-) {
-  if (address.fullName.trim().length < 2)
-    throw new Error("Enter the recipient's full name.");
-  if (address.line1.trim().length < 3)
-    throw new Error("Enter a street address.");
-  if (address.city.trim().length < 2) throw new Error("Enter a city.");
-  if (address.region.trim().length < 2) throw new Error("Enter a state or region.");
-  if (address.postalCode.trim().length < 2)
-    throw new Error("Enter a postal code.");
-  if (address.country.trim().length < 2) throw new Error("Enter a country.");
-  if (address.phone.trim().replace(/\D/g, "").length < 6)
-    throw new Error("Enter a contact phone number.");
-}
 
 /** Derive the order status from its line items. */
 async function recomputeOrderStatus(
@@ -71,7 +46,8 @@ export const place = mutation({
         quantity: v.number(),
       }),
     ),
-    shippingAddress: shippingAddressValidator,
+    method: v.union(v.literal("meetup"), v.literal("shipping")),
+    note: v.optional(v.string()),
     paymentMethod: v.union(v.literal("cod"), v.literal("card")),
   },
   handler: async (ctx, args) => {
@@ -85,7 +61,6 @@ export const place = mutation({
         "Card payments are not configured yet. Choose pay on delivery to complete your order.",
       );
     }
-    await validateAddress(args.shippingAddress);
 
     // Validate every line against live inventory before touching anything.
     const lines: {
@@ -113,7 +88,6 @@ export const place = mutation({
     }
 
     let subtotalCents = 0;
-    const sellerFees = new Map<string, number>();
     const items: {
       productId: Id<"products">;
       sellerId: Id<"users">;
@@ -124,27 +98,19 @@ export const place = mutation({
 
     for (const line of lines) {
       subtotalCents += line.product.priceCents * line.quantity;
-      const sellerId = line.product.sellerId;
-      sellerFees.set(
-        sellerId,
-        Math.max(
-          sellerFees.get(sellerId) ?? 0,
-          line.product.shipping.flatFeeCents,
-        ),
-      );
       items.push({
         productId: line.productId,
-        sellerId,
+        sellerId: line.product.sellerId,
         title: line.product.title,
         priceCents: line.product.priceCents,
         quantity: line.quantity,
       });
     }
-    const shippingCents = [...sellerFees.values()].reduce(
-      (sum, fee) => sum + fee,
-      0,
-    );
-    const totalCents = subtotalCents + shippingCents;
+    // No platform shipping fees — buyers and sellers agree on shipping or a
+    // meet-up directly, and both approve the arrangement before handoff.
+    const totalCents = subtotalCents;
+    const fulfillmentNote = args.note?.trim().slice(0, 500) || undefined;
+    const sellerIds = [...new Set(lines.map((l) => l.product.sellerId))];
 
     // Decrement stock only after all checks pass.
     for (const line of lines) {
@@ -159,20 +125,18 @@ export const place = mutation({
       buyerId: buyer._id,
       items,
       subtotalCents,
-      shippingCents,
       totalCents,
       status: "placed",
       paymentMethod: "cod",
-      shippingAddress: {
-        fullName: args.shippingAddress.fullName.trim(),
-        line1: args.shippingAddress.line1.trim(),
-        line2: args.shippingAddress.line2?.trim() || undefined,
-        city: args.shippingAddress.city.trim(),
-        region: args.shippingAddress.region.trim(),
-        postalCode: args.shippingAddress.postalCode.trim(),
-        country: args.shippingAddress.country.trim(),
-        phone: args.shippingAddress.phone.trim(),
-      },
+      // The buyer's checkout choice counts as their approval of the deal;
+      // each seller still has to approve (or propose a change) their side.
+      fulfillments: sellerIds.map((sellerId) => ({
+        sellerId,
+        method: args.method,
+        note: fulfillmentNote,
+        buyerAgreed: true,
+        sellerAgreed: false,
+      })),
       placedAt: now,
     });
 
@@ -226,9 +190,18 @@ export const myOrders = query({
       .query("orderItems")
       .withIndex("by_buyer", (s) => s.eq("buyerId", user._id))
       .take(300);
+    const sellerIds = [...new Set(items.map((i) => i.sellerId))];
+    const sellers = await Promise.all(sellerIds.map((id) => ctx.db.get(id)));
+    const sellerNames: Record<string, string> = {};
+    for (const seller of sellers) {
+      if (seller) {
+        sellerNames[seller._id] = seller.shopName ?? seller.name ?? "Seller";
+      }
+    }
     return orders.map((order) => ({
       ...order,
       items: items.filter((i) => i.orderId === order._id),
+      sellerNames,
     }));
   },
 });
@@ -265,7 +238,7 @@ export const sellerOrders = query({
         totalCents: order.totalCents,
         createdAt: order._creationTime,
         buyerName: buyerName.get(order.buyerId) ?? "Buyer",
-        shippingAddress: order.shippingAddress,
+        fulfillments: order.fulfillments,
         items: items.filter(
           (i) =>
             i.orderId === order._id && i.sellerId === user._id,
@@ -293,6 +266,20 @@ export const updateItemStatus = mutation({
     if (!item) throw new Error("That order item no longer exists.");
     if (item.sellerId !== user._id && user.role !== "admin")
       throw new Error("You can only update orders for your own listings.");
+
+    // Both parties must approve the fulfillment deal (shipping or meet-up)
+    // before the seller can dispatch.
+    if (item.status === "placed" && args.status === "shipped") {
+      const order = await ctx.db.get(item.orderId);
+      const entry = order?.fulfillments?.find(
+        (f) => f.sellerId === item.sellerId,
+      );
+      if (!entry || !entry.buyerAgreed || !entry.sellerAgreed) {
+        throw new Error(
+          "Both buyer and seller must approve the fulfillment arrangement (shipping or meet-up) before dispatch.",
+        );
+      }
+    }
 
     const allowed: Record<string, OrderStatus[]> = {
       placed: ["shipped", "cancelled"],
@@ -352,6 +339,85 @@ export const cancel = mutation({
     }
 
     await ctx.db.patch(args.orderId, { status: "cancelled" });
+    return true;
+  },
+});
+
+/**
+ * Buyer or seller proposes / updates the fulfillment deal for one seller on
+ * an order (meet up, or shipping arranged directly). Editing resets the other
+ * party's approval so both must approve the final terms.
+ */
+export const setFulfillment = mutation({
+  args: {
+    orderId: v.id("orders"),
+    sellerId: v.id("users"),
+    method: v.union(v.literal("meetup"), v.literal("shipping")),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireVerifiedUser(ctx);
+    const order = await ctx.db.get(args.orderId);
+    if (!order) throw new Error("Order not found.");
+    const isBuyer = order.buyerId === user._id;
+    const isSeller = args.sellerId === user._id;
+    if (!isBuyer && !isSeller)
+      throw new Error("Only the buyer or seller can arrange fulfillment.");
+    if (order.status !== "placed")
+      throw new Error(
+        "This order is already in progress — the arrangement is locked.",
+      );
+    const orderItems = await ctx.db
+      .query("orderItems")
+      .withIndex("by_order", (s) => s.eq("orderId", args.orderId))
+      .collect();
+    if (!orderItems.some((i) => i.sellerId === args.sellerId))
+      throw new Error("That seller is not part of this order.");
+
+    const note = args.note?.trim().slice(0, 500) || undefined;
+    const fulfillments = [...(order.fulfillments ?? [])];
+    const entry = {
+      sellerId: args.sellerId,
+      method: args.method,
+      note,
+      // The editor's own approval stands; the other party re-approves.
+      buyerAgreed: isBuyer,
+      sellerAgreed: isSeller,
+    };
+    const index = fulfillments.findIndex((f) => f.sellerId === args.sellerId);
+    if (index === -1) fulfillments.push(entry);
+    else fulfillments[index] = entry;
+    await ctx.db.patch(args.orderId, { fulfillments });
+    return true;
+  },
+});
+
+/** Buyer or seller signs off on the other party's proposed arrangement. */
+export const approveFulfillment = mutation({
+  args: { orderId: v.id("orders"), sellerId: v.id("users") },
+  handler: async (ctx, args) => {
+    const user = await requireVerifiedUser(ctx);
+    const order = await ctx.db.get(args.orderId);
+    if (!order) throw new Error("Order not found.");
+    const isBuyer = order.buyerId === user._id;
+    const isSeller = args.sellerId === user._id;
+    if (!isBuyer && !isSeller)
+      throw new Error("Only the buyer or seller can approve fulfillment.");
+    if (order.status !== "placed")
+      throw new Error(
+        "This order is already in progress — the arrangement is locked.",
+      );
+    const fulfillments = [...(order.fulfillments ?? [])];
+    const index = fulfillments.findIndex((f) => f.sellerId === args.sellerId);
+    if (index === -1)
+      throw new Error(
+        "No arrangement yet — propose shipping or a meet-up first.",
+      );
+    const entry = { ...fulfillments[index] };
+    if (isBuyer) entry.buyerAgreed = true;
+    if (isSeller) entry.sellerAgreed = true;
+    fulfillments[index] = entry;
+    await ctx.db.patch(args.orderId, { fulfillments });
     return true;
   },
 });

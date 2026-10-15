@@ -14,7 +14,7 @@ const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
  * Catalog card: photo (or themed placeholder), availability badge, price,
- * shipping note, and seller link. Availability is always visible so buyers
+ * fulfillment hint, and seller link. Availability is always visible so buyers
  * never mistake a sold item for an active one.
  */
 export function ProductCard({
@@ -27,7 +27,6 @@ export function ProductCard({
   const category = CATEGORIES.find((c) => c.id === product.categoryId);
   const sellerName =
     product.seller?.shopName ?? product.seller?.name ?? product.sellerName;
-  const shippingFee = product.shipping?.flatFeeCents ?? 0;
   const isNew =
     product._creationTime &&
     LOADED_AT - product._creationTime < THREE_DAYS_MS;
@@ -87,9 +86,7 @@ export function ProductCard({
               {formatPrice(product.priceCents)}
             </p>
             <p className="text-xs text-muted-foreground">
-              {shippingFee > 0
-                ? `+ ${formatPrice(shippingFee)} shipping`
-                : "Free shipping"}
+              Meet up or ship directly
             </p>
           </div>
           {product.seller?.id && sellerName && (

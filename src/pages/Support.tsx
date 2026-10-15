@@ -30,20 +30,20 @@ import { toast } from "sonner";
 const groups = [
   {
     id: "shipping",
-    title: "Shipping & delivery",
+    title: "Meet-ups & delivery",
     icon: Truck,
     items: [
       {
-        q: "How long does delivery take?",
-        a: "Each listing shows the seller's estimated dispatch time (1–90 days, set by the seller). You'll see tracking milestones — placed, shipped, delivered — on your orders page.",
+        q: "How do I get the item?",
+        a: "At checkout you choose meet-up or shipping. Buyer and seller then confirm the details directly — meeting spot, or carrier, cost, and timing — and both approve the deal on the orders page before handoff.",
       },
       {
-        q: "How much is shipping?",
-        a: "Shipping is a flat fee set by the seller per listing; many listings are free shipping. The exact fee is shown on the product page and again in your cart before you order — it's charged once per seller per order.",
+        q: "Who arranges shipping?",
+        a: "You do — there are no platform shipping fees. Propose the terms from your orders page (or reply to the other party's proposal); the deal moves forward once both of you approve it.",
       },
       {
         q: "Can I get an order delivered internationally?",
-        a: "It depends on the seller — check the 'ships from' location on the listing and confirm with the seller through their profile before ordering.",
+        a: "It depends on the seller — agree the details directly with them when you arrange shipping from your orders page, before either of you approves the deal.",
       },
     ],
   },
@@ -100,7 +100,7 @@ const groups = [
       },
       {
         q: "Where can I see my orders?",
-        a: "Sign in and open Order history from the account menu — every order shows its items, shipping address, and live fulfilment status.",
+        a: "Sign in and open Order history from the account menu — every order shows its items, the agreed meet-up or shipping arrangement, and live fulfilment status.",
       },
     ],
   },

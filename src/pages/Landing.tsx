@@ -43,7 +43,7 @@ const steps = [
   {
     icon: Camera,
     title: "List your item in minutes",
-    body: "Add photos, a title, price, inventory and shipping details. Listing is free — $0 to post, $0 to keep your shop open.",
+    body: "Add photos, a title, price and inventory. Listing is free — $0 to post, $0 to keep your shop open.",
   },
   {
     icon: Truck,

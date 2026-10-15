@@ -39,16 +39,11 @@ export const orderStatusValidator = v.union(
 );
 export type OrderStatus = Infer<typeof orderStatusValidator>;
 
-export const shippingAddressValidator = v.object({
-  fullName: v.string(),
-  line1: v.string(),
-  line2: v.optional(v.string()),
-  city: v.string(),
-  region: v.string(),
-  postalCode: v.string(),
-  country: v.string(),
-  phone: v.string(),
-});
+export const fulfillmentMethodValidator = v.union(
+  v.literal("meetup"),
+  v.literal("shipping"),
+);
+export type FulfillmentMethod = Infer<typeof fulfillmentMethodValidator>;
 
 export const analyticsEventTypeValidator = v.union(
   v.literal("product_view"),
@@ -95,11 +90,6 @@ const schema = defineSchema(
       quantity: v.number(),
       condition: conditionValidator,
       imageStorageIds: v.optional(v.array(v.string())),
-      shipping: v.object({
-        flatFeeCents: v.number(),
-        shipsFrom: v.optional(v.string()),
-        estimatedDays: v.number(),
-      }),
       returns: v.object({
         accepted: v.boolean(),
         days: v.number(),
@@ -157,11 +147,23 @@ const schema = defineSchema(
         }),
       ),
       subtotalCents: v.number(),
-      shippingCents: v.number(),
       totalCents: v.number(),
       status: orderStatusValidator,
       paymentMethod: v.union(v.literal("cod"), v.literal("card")),
-      shippingAddress: shippingAddressValidator,
+      // Per-seller fulfillment deal: meet up or shipping arranged directly.
+      // Both parties must approve before handoff; editing resets the other
+      // party's approval.
+      fulfillments: v.optional(
+        v.array(
+          v.object({
+            sellerId: v.id("users"),
+            method: fulfillmentMethodValidator,
+            note: v.optional(v.string()),
+            buyerAgreed: v.boolean(),
+            sellerAgreed: v.boolean(),
+          }),
+        ),
+      ),
       placedAt: v.optional(v.number()),
       deliveredAt: v.optional(v.number()),
     }).index("by_buyer", ["buyerId"]),

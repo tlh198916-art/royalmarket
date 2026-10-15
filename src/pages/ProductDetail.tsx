@@ -140,7 +140,7 @@ export default function ProductDetail() {
   );
   const activeImage = imageUrls[activeIndex] ?? null;
   const purchasable = product.available;
-  const shippingFee = product.shipping?.flatFeeCents ?? 0;
+  const fulfillmentHint = "Meet up or ship directly";
   const maxQty = Math.max(1, Math.min(product.quantity, 20));
   const qty = Math.min(quantity, maxQty);
   const sellerName =
@@ -307,9 +307,7 @@ export default function ProductDetail() {
                 {formatPrice(product.priceCents)}
               </span>
               <span className="pb-1 text-sm text-muted-foreground">
-                {shippingFee > 0
-                  ? `+ ${formatPrice(shippingFee)} shipping`
-                  : "Free shipping"}
+                {fulfillmentHint}
               </span>
             </div>
 
@@ -432,15 +430,10 @@ export default function ProductDetail() {
               <div className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-card p-3.5">
                 <Truck className="mt-0.5 size-4 shrink-0 text-primary" />
                 <div className="text-xs leading-5">
-                  <p className="font-semibold">Shipping</p>
+                  <p className="font-semibold">Meet up or shipping</p>
                   <p className="text-muted-foreground">
-                    {shippingFee > 0
-                      ? `${formatPrice(shippingFee)} flat rate`
-                      : "Free"}{" "}
-                    · arrives in ~{product.shipping?.estimatedDays ?? 5} days
-                    {product.shipping?.shipsFrom
-                      ? ` from ${product.shipping.shipsFrom}`
-                      : ""}
+                    Agree the details directly with the seller — both of you
+                    approve the deal before handoff. No platform shipping fees.
                   </p>
                 </div>
               </div>
@@ -662,8 +655,8 @@ export default function ProductDetail() {
             account
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <CalendarClock className="size-3.5 text-primary" /> Dispatched in ~
-            {product.shipping?.estimatedDays ?? 5} days
+            <CalendarClock className="size-3.5 text-primary" /> Meet-up or
+            shipping, agreed together
           </span>
           <span className="inline-flex items-center gap-1.5">
             <MapPin className="size-3.5 text-primary" /> Order tracked in-app

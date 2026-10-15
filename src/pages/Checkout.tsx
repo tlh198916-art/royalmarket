@@ -3,9 +3,9 @@ import { Layout } from "@/components/marketplace/Layout";
 import { ProductMedia } from "@/components/marketplace/ProductMedia";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useCart } from "@/lib/cart";
@@ -14,6 +14,8 @@ import { useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
   CreditCard,
+  Handshake,
+  Package,
   ShieldCheck,
   ShoppingCart,
   Truck,
@@ -30,6 +32,7 @@ export default function Checkout() {
   const placeOrder = useMutation(api.orders.place);
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
+  const [method, setMethod] = useState<"meetup" | "shipping">("meetup");
 
   const liveById = useMemo(() => {
     const map = new Map<string, NonNullable<typeof liveProducts>[number]>();
@@ -49,7 +52,6 @@ export default function Checkout() {
             : "This listing was removed by the seller.",
         quantity: line.quantity,
         effectivePriceCents: line.priceCents,
-        shippingFeeCents: 0,
         sellerId: "",
       };
     }
@@ -65,7 +67,6 @@ export default function Checkout() {
       issue,
       quantity,
       effectivePriceCents: live.priceCents,
-      shippingFeeCents: live.shipping?.flatFeeCents ?? 0,
       sellerId: live.sellerId,
     };
   });
@@ -75,24 +76,17 @@ export default function Checkout() {
   );
   const hasBlockingIssue = blockingIssues.length > 0;
 
-  const { itemsSubtotalCents, shippingCents, totalCents } = useMemo(() => {
-    const perSeller = new Map<string, number>();
+  const { itemsSubtotalCents, totalCents } = useMemo(() => {
     let itemsTotal = 0;
     for (const row of rows) {
       if (!row.live || row.quantity === 0) continue;
       itemsTotal += row.effectivePriceCents * row.quantity;
-      if (row.sellerId) {
-        perSeller.set(
-          row.sellerId,
-          Math.max(perSeller.get(row.sellerId) ?? 0, row.shippingFeeCents),
-        );
-      }
     }
-    const ship = [...perSeller.values()].reduce((sum, fee) => sum + fee, 0);
+    // Shipping is arranged directly between buyer and seller — no platform
+    // fees, and no address collected up front.
     return {
       itemsSubtotalCents: itemsTotal,
-      shippingCents: ship,
-      totalCents: itemsTotal + ship,
+      totalCents: itemsTotal,
     };
   }, [rows]);
 
@@ -112,21 +106,14 @@ export default function Checkout() {
             productId: row.line.productId as Id<"products">,
             quantity: row.quantity,
           })),
-        shippingAddress: {
-          fullName: String(formData.get("fullName") ?? ""),
-          line1: String(formData.get("line1") ?? ""),
-          line2: String(formData.get("line2") ?? "") || undefined,
-          city: String(formData.get("city") ?? ""),
-          region: String(formData.get("region") ?? ""),
-          postalCode: String(formData.get("postalCode") ?? ""),
-          country: String(formData.get("country") ?? ""),
-          phone: String(formData.get("phone") ?? ""),
-        },
+        method,
+        note: String(formData.get("fulfillmentNote") ?? "") || undefined,
         paymentMethod: "cod",
       });
       clear();
-      toast.success("Order placed! Pay on delivery.", {
-        description: "Track its status any time from your orders page.",
+      toast.success("Order placed!", {
+        description:
+          "Agree on meet-up or shipping with your seller — both of you approve the deal from your orders page.",
       });
       navigate(`/orders?placed=${orderId}`);
     } catch (error) {
@@ -255,50 +242,83 @@ export default function Checkout() {
               ))}
             </section>
 
-            {/* Shipping address */}
+            {/* Fulfillment arrangement */}
             <section className="rounded-2xl border border-border/70 bg-card p-6">
               <h2 className="text-sm font-bold tracking-tight">
-                Shipping address
+                How will you get it?
               </h2>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label htmlFor="fullName">Full name *</Label>
-                  <Input id="fullName" name="fullName" required minLength={2} />
-                </div>
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label htmlFor="line1">Street address *</Label>
-                  <Input id="line1" name="line1" required minLength={3} />
-                </div>
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label htmlFor="line2">Apt, suite (optional)</Label>
-                  <Input id="line2" name="line2" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="city">City *</Label>
-                  <Input id="city" name="city" required minLength={2} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="region">State / region *</Label>
-                  <Input id="region" name="region" required minLength={2} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="postalCode">Postal code *</Label>
-                  <Input id="postalCode" name="postalCode" required minLength={2} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="country">Country *</Label>
-                  <Input id="country" name="country" required minLength={2} />
-                </div>
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label htmlFor="phone">Contact phone *</Label>
-                  <Input
-                    id="phone"
-                    name="phone"
-                    type="tel"
-                    required
-                    placeholder="So the seller can coordinate delivery"
+              <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                No shipping fees are charged here. You and the seller agree on
+                the details yourselves — meet up or arrange shipping — and
+                both approve the deal from your orders page before handoff.
+              </p>
+              <RadioGroup
+                value={method}
+                onValueChange={(value) =>
+                  setMethod(value === "shipping" ? "shipping" : "meetup")
+                }
+                className="mt-4 space-y-3"
+              >
+                <label
+                  htmlFor="method-meetup"
+                  className="flex cursor-pointer items-start gap-3 rounded-xl border border-primary/50 bg-primary/5 p-4"
+                >
+                  <RadioGroupItem
+                    id="method-meetup"
+                    value="meetup"
+                    className="mt-0.5"
                   />
-                </div>
+                  <span className="flex-1">
+                    <span className="flex items-center gap-2 text-sm font-semibold">
+                      <Handshake className="size-4 text-primary" /> Meet up
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                      Coordinate a public meet-up or local pickup directly with
+                      the seller.
+                    </span>
+                  </span>
+                </label>
+                <label
+                  htmlFor="method-shipping"
+                  className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 p-4 transition-colors hover:border-primary/50"
+                >
+                  <RadioGroupItem
+                    id="method-shipping"
+                    value="shipping"
+                    className="mt-0.5"
+                  />
+                  <span className="flex-1">
+                    <span className="flex items-center gap-2 text-sm font-semibold">
+                      <Package className="size-4" /> Shipping — arranged
+                      directly
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                      You and the seller agree on carrier, cost, and timing
+                      between yourselves — the platform adds no shipping
+                      charges.
+                    </span>
+                  </span>
+                </label>
+              </RadioGroup>
+              <div className="mt-4 space-y-1.5">
+                <Label htmlFor="fulfillmentNote">
+                  Your suggested arrangement (optional)
+                </Label>
+                <Textarea
+                  id="fulfillmentNote"
+                  name="fulfillmentNote"
+                  rows={3}
+                  maxLength={500}
+                  placeholder={
+                    method === "meetup"
+                      ? "e.g. Meet Saturday at the central library, daytime"
+                      : "e.g. Happy to ship — we'll confirm courier and cost together"
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  The seller can reply with a counter-proposal. Both of you
+                  approve the final deal on the order page.
+                </p>
               </div>
             </section>
 
@@ -352,15 +372,9 @@ export default function Checkout() {
               <h2 className="text-sm font-bold tracking-tight">Order summary</h2>
               <dl className="mt-4 space-y-2.5 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Items subtotal</dt>
+                  <dt className="text-muted-foreground">Subtotal</dt>
                   <dd className="font-medium">
                     {formatPrice(itemsSubtotalCents)}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Shipping</dt>
-                  <dd className="font-medium">
-                    {shippingCents > 0 ? formatPrice(shippingCents) : "Free"}
                   </dd>
                 </div>
                 <div className="flex justify-between border-t border-border/70 pt-2.5 text-base">

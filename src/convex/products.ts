@@ -17,12 +17,6 @@ const sortValidator = v.union(
   v.literal("popular"),
 );
 
-const shippingArgs = v.object({
-  flatFeeCents: v.number(),
-  shipsFrom: v.optional(v.string()),
-  estimatedDays: v.number(),
-});
-
 const returnsArgs = v.object({
   accepted: v.boolean(),
   days: v.number(),
@@ -217,7 +211,6 @@ export const create = mutation({
       v.literal("fair"),
     ),
     imageStorageIds: v.optional(v.array(v.string())),
-    shipping: shippingArgs,
     returns: returnsArgs,
     publish: v.boolean(),
   },
@@ -235,20 +228,6 @@ export const create = mutation({
     if (error) throw new Error(error);
     if (!isValidCategoryId(args.categoryId))
       throw new Error("Choose a valid category.");
-    if (
-      !Number.isInteger(args.shipping.estimatedDays) ||
-      args.shipping.estimatedDays < 1 ||
-      args.shipping.estimatedDays > 90
-    ) {
-      throw new Error("Estimated shipping must be between 1 and 90 days.");
-    }
-    if (
-      !Number.isFinite(args.shipping.flatFeeCents) ||
-      args.shipping.flatFeeCents < 0 ||
-      args.shipping.flatFeeCents > 100_000
-    ) {
-      throw new Error("Shipping fee must be between $0 and $1,000.");
-    }
     if (args.returns.days < 0 || args.returns.days > 90) {
       throw new Error("Return window must be between 0 and 90 days.");
     }
@@ -265,11 +244,6 @@ export const create = mutation({
       quantity: args.quantity,
       condition: args.condition,
       imageStorageIds: args.imageStorageIds?.slice(0, 8) ?? [],
-      shipping: {
-        flatFeeCents: Math.round(args.shipping.flatFeeCents),
-        shipsFrom: args.shipping.shipsFrom?.trim().slice(0, 80) || undefined,
-        estimatedDays: args.shipping.estimatedDays,
-      },
       returns: {
         accepted: args.returns.accepted,
         days: args.returns.accepted ? args.returns.days : 0,
@@ -305,7 +279,6 @@ export const update = mutation({
       v.literal("fair"),
     ),
     imageStorageIds: v.optional(v.array(v.string())),
-    shipping: shippingArgs,
     returns: returnsArgs,
     status: v.union(v.literal("draft"), v.literal("active")),
   },
@@ -343,11 +316,6 @@ export const update = mutation({
       quantity: args.quantity,
       condition: args.condition,
       imageStorageIds: args.imageStorageIds?.slice(0, 8) ?? [],
-      shipping: {
-        flatFeeCents: Math.round(args.shipping.flatFeeCents),
-        shipsFrom: args.shipping.shipsFrom?.trim().slice(0, 80) || undefined,
-        estimatedDays: args.shipping.estimatedDays,
-      },
       returns: {
         accepted: args.returns.accepted,
         days: args.returns.accepted ? args.returns.days : 0,
