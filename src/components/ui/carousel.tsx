@@ -30,6 +30,20 @@ type CarouselContextProps = {
 
 const CarouselContext = React.createContext<CarouselContextProps | null>(null)
 
+function getNoScroll() {
+  return false
+}
+
+function subscribeScrollEvents(api: CarouselApi, onChange: () => void) {
+  if (!api) return () => {}
+  api.on("reInit", onChange)
+  api.on("select", onChange)
+  return () => {
+    api.off("reInit", onChange)
+    api.off("select", onChange)
+  }
+}
+
 function useCarousel() {
   const context = React.useContext(CarouselContext)
 
@@ -56,15 +70,6 @@ function Carousel({
     },
     plugins
   )
-  const [canScrollPrev, setCanScrollPrev] = React.useState(false)
-  const [canScrollNext, setCanScrollNext] = React.useState(false)
-
-  const onSelect = React.useCallback((api: CarouselApi) => {
-    if (!api) return
-    setCanScrollPrev(api.canScrollPrev())
-    setCanScrollNext(api.canScrollNext())
-  }, [])
-
   const scrollPrev = React.useCallback(() => {
     api?.scrollPrev()
   }, [api])
@@ -91,16 +96,22 @@ function Carousel({
     setApi(api)
   }, [api, setApi])
 
-  React.useEffect(() => {
-    if (!api) return
-    onSelect(api)
-    api.on("reInit", onSelect)
-    api.on("select", onSelect)
-
-    return () => {
-      api?.off("select", onSelect)
-    }
-  }, [api, onSelect])
+  // Scroll capability lives in embla (an external store): subscribe to it so
+  // the arrows track the carousel without syncing derived state in an effect.
+  const subscribeScroll = React.useCallback(
+    (onChange: () => void) => subscribeScrollEvents(api, onChange),
+    [api]
+  )
+  const canScrollPrev = React.useSyncExternalStore(
+    subscribeScroll,
+    React.useCallback(() => api?.canScrollPrev() ?? false, [api]),
+    getNoScroll
+  )
+  const canScrollNext = React.useSyncExternalStore(
+    subscribeScroll,
+    React.useCallback(() => api?.canScrollNext() ?? false, [api]),
+    getNoScroll
+  )
 
   return (
     <CarouselContext.Provider
