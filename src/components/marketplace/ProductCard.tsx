@@ -86,7 +86,17 @@ export function ProductCard({
               {formatPrice(product.priceCents)}
             </p>
             <p className="text-xs text-muted-foreground">
-              Meet up or ship directly
+              <span className="capitalize">
+                {(product.condition ?? "good").replace("_", " ")}
+              </span>
+              {" · "}
+              {product.available
+                ? product.quantity <= 5
+                  ? `${product.quantity} left`
+                  : "In stock"
+                : product.status === "removed"
+                  ? "Unavailable"
+                  : "Sold out"}
             </p>
           </div>
           {product.seller?.id && sellerName && (

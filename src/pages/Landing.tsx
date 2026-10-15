@@ -18,11 +18,15 @@ import {
   Eye,
   HeartHandshake,
   LayoutGrid,
+  LifeBuoy,
   MailCheck,
   PackageSearch,
+  RotateCcw,
+  ShieldCheck,
   Sparkles,
   Tag,
   Truck,
+  Wallet,
 } from "lucide-react";
 import { useMemo } from "react";
 import { Link } from "react-router";
@@ -37,47 +41,57 @@ const fadeUp = {
 const steps = [
   {
     icon: MailCheck,
-    title: "Create a verified account",
-    body: "Sign up free with your email and confirm the 6-digit code we send you. Every seller and buyer is a real, verified person.",
+    title: "Create an account",
+    body: "Sign up free and confirm the 6-digit code we email you. Every buyer and seller is a real, verified person.",
   },
   {
     icon: Camera,
-    title: "List your item in minutes",
-    body: "Add photos, a title, price and inventory. Listing is free — $0 to post, $0 to keep your shop open.",
+    title: "Publish a listing",
+    body: "Add photos, price, stock and a return window. Free to post, no approval queue — listings go live instantly.",
   },
   {
     icon: Truck,
-    title: "Sell, ship & get paid",
-    body: "Buyers order in-app with transparent availability. You mark items shipped and delivered, and collect payment on delivery.",
+    title: "Manage orders",
+    body: "Track every order from your dashboard, agree on meet-up or shipping with the buyer (you both approve it), and mark items shipped and delivered.",
+  },
+  {
+    icon: Wallet,
+    title: "Receive payments",
+    body: "Buyers pay on delivery at handoff — you collect directly from the buyer and keep 100% of the sale at launch.",
   },
 ];
 
 const trustPoints = [
   {
     icon: BadgeCheck,
-    title: "Email-verified accounts",
-    body: "No anonymous listings — every account confirms a real inbox before selling or buying.",
+    title: "Verified accounts",
+    body: "Every account confirms a real email address with a 6-digit code — no anonymous buyers or sellers.",
   },
   {
-    icon: Tag,
-    title: "Free to post, always",
-    body: "No listing fees, no shop subscription, no commission taken from your sales at launch.",
+    icon: ShieldCheck,
+    title: "You pay on delivery",
+    body: "Checkout never asks for card details. You inspect the item and pay the seller when you receive it — nothing is charged online today.",
   },
   {
-    icon: Eye,
-    title: "Honest availability",
-    body: "Stock counts are live. Sold items stay visible but clearly marked so nobody wastes a message.",
+    icon: RotateCcw,
+    title: "Returns & refunds",
+    body: "Every listing shows its return window (0–90 days) before you buy, and you can cancel any order while it's still 'placed'. Refunds follow the seller's stated return policy.",
   },
   {
     icon: HeartHandshake,
-    title: "Human support",
-    body: "Open a ticket from the support page and admins follow up from the same dashboard.",
+    title: "Dispute handling",
+    body: "Open a support ticket with your order number and photos — admins review it and mediate with the seller toward a replacement or refund.",
+  },
+  {
+    icon: LifeBuoy,
+    title: "Contact information",
+    body: "Reach the team through the support page. Open a ticket and every reply lands in one thread, answered by marketplace admins.",
   },
 ];
 
 export default function Landing() {
   const { user, isLoading } = useAuth();
-  const featured = useQuery(api.products.list, { sortBy: "popular", limit: 8 });
+  const featured = useQuery(api.products.list, { sortBy: "popular", limit: 4 });
   const recentlyAdded = useQuery(api.products.list, { sortBy: "newest", limit: 8 });
 
   const recentIds = useMemo(() => getRecentViews(), []);
@@ -93,7 +107,7 @@ export default function Landing() {
       {/* Hero */}
       <section className="relative overflow-hidden border-b border-border/70">
         <div className="hero-glow pointer-events-none absolute inset-0" aria-hidden />
-        <div className="page-container relative py-16 sm:py-24">
+        <div className="page-container relative py-10 sm:py-16 lg:py-20">
           <motion.div
             initial={{ opacity: 0, y: 26 }}
             animate={{ opacity: 1, y: 0 }}
@@ -102,7 +116,7 @@ export default function Landing() {
           >
             <Badge
               variant="secondary"
-              className="mb-6 border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary"
+              className="mb-4 border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary"
             >
               Free to post · Verified accounts · Live availability
             </Badge>
@@ -110,17 +124,17 @@ export default function Landing() {
               The royal-blue marketplace for{" "}
               <span className="text-royal-gradient">buying &amp; selling</span>
             </h1>
-            <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
+            <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
               Browse listings from verified sellers, list your own items for
               free, and always see exactly what&apos;s in stock — no fake
               ratings, no fake sales, no hidden listing fees.
             </p>
 
-            <div className="mx-auto mt-8 max-w-2xl">
+            <div className="mx-auto mt-6 max-w-2xl">
               <SearchBar large />
             </div>
 
-            <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Button asChild size="lg" className="w-full px-7 sm:w-auto">
                 <Link to="/products">
                   Browse products <ArrowRight className="ml-2 size-4" />
@@ -136,7 +150,7 @@ export default function Landing() {
               </Button>
             </div>
 
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs font-medium text-muted-foreground">
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs font-medium text-muted-foreground sm:mt-8">
               <span>0% listing fees</span>
               <span className="hidden sm:inline">·</span>
               <span>Email-verified sellers &amp; buyers</span>
@@ -147,8 +161,63 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Featured products */}
+      <section className="section-pad">
+        <div className="page-container">
+          <motion.div {...fadeUp} className="mb-7 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Sparkles className="size-4 text-primary" />
+                <h2 className="text-xl font-bold tracking-tight sm:text-2xl">
+                  Featured products
+                </h2>
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                The most-viewed live listings on the marketplace.
+              </p>
+            </div>
+            <Link
+              to="/products?sort=popular"
+              className="text-sm font-medium text-primary transition-colors hover:text-primary/80"
+            >
+              View all products →
+            </Link>
+          </motion.div>
+
+          {featured === undefined ? (
+            <div className="flex justify-center py-10">
+              <div className="size-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            </div>
+          ) : featured.length === 0 ? (
+            <EmptyState
+              icon={Sparkles}
+              title="Nothing featured yet"
+              description="Featured picks are drawn from real listings. As soon as sellers publish and shoppers browse, the top items show up right here."
+              action={
+                <Button asChild>
+                  <Link to="/sell">
+                    <Tag className="mr-2 size-4" /> List the first item
+                  </Link>
+                </Button>
+              }
+              secondaryAction={
+                <Button asChild variant="outline">
+                  <Link to="/products">Browse the catalog</Link>
+                </Button>
+              }
+            />
+          ) : (
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+              {featured.map((product, index) => (
+                <ProductCard key={product._id} product={product} index={index} />
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
       {/* Category navigation */}
-      <section id="categories" className="border-b border-border/70 bg-card/30 py-12">
+      <section id="categories" className="border-b border-border/70 bg-card/30 py-10 sm:py-12">
         <div className="page-container">
           <div className="mb-6 flex items-end justify-between gap-4">
             <div>
@@ -189,61 +258,6 @@ export default function Landing() {
               </motion.div>
             ))}
           </div>
-        </div>
-      </section>
-
-      {/* Featured products */}
-      <section className="section-pad">
-        <div className="page-container">
-          <motion.div {...fadeUp} className="mb-7 flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <Sparkles className="size-4 text-primary" />
-                <h2 className="text-xl font-bold tracking-tight sm:text-2xl">
-                  Featured products
-                </h2>
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                The most-viewed live listings on the marketplace.
-              </p>
-            </div>
-            <Link
-              to="/products?sort=popular"
-              className="text-sm font-medium text-primary transition-colors hover:text-primary/80"
-            >
-              View all →
-            </Link>
-          </motion.div>
-
-          {featured === undefined ? (
-            <div className="flex justify-center py-10">
-              <div className="size-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-            </div>
-          ) : featured.length === 0 ? (
-            <EmptyState
-              icon={Sparkles}
-              title="Nothing featured yet"
-              description="Featured picks are drawn from real listings. As soon as sellers publish and shoppers browse, the top items show up right here."
-              action={
-                <Button asChild>
-                  <Link to="/sell">
-                    <Tag className="mr-2 size-4" /> List the first item
-                  </Link>
-                </Button>
-              }
-              secondaryAction={
-                <Button asChild variant="outline">
-                  <Link to="/products">Browse the catalog</Link>
-                </Button>
-              }
-            />
-          ) : (
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              {featured.map((product, index) => (
-                <ProductCard key={product._id} product={product} index={index} />
-              ))}
-            </div>
-          )}
         </div>
       </section>
 
@@ -340,15 +354,15 @@ export default function Landing() {
         <div className="page-container">
           <motion.div {...fadeUp} className="mx-auto max-w-2xl text-center">
             <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
-              Selling takes three steps
+              How selling works
             </h2>
             <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">
-              Free to post, transparent all the way through — here&apos;s the
-              whole flow.
+              Four steps from sign-up to payment — with the fees and payout
+              terms stated up front.
             </p>
           </motion.div>
 
-          <div className="mt-10 grid gap-4 md:grid-cols-3">
+          <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {steps.map((step, index) => (
               <motion.div
                 key={step.title}
@@ -371,6 +385,61 @@ export default function Landing() {
               </motion.div>
             ))}
           </div>
+
+          {/* Fees & payouts — stated plainly */}
+          <motion.div
+            {...fadeUp}
+            className="mt-8 rounded-2xl border border-border/70 bg-card p-6 sm:p-7"
+          >
+            <h3 className="text-sm font-bold tracking-tight">
+              Fees &amp; payout terms, in plain numbers
+            </h3>
+            <dl className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Cost per listing
+                </dt>
+                <dd className="mt-1 text-sm font-semibold">
+                  $0 — list as much as you like
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Shop subscription
+                </dt>
+                <dd className="mt-1 text-sm font-semibold">
+                  $0 — no monthly charge
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Commission on sales
+                </dt>
+                <dd className="mt-1 text-sm font-semibold">
+                  0% at launch — you keep the sale price
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Payouts
+                </dt>
+                <dd className="mt-1 text-sm font-semibold">
+                  Collected on delivery, straight from the buyer
+                </dd>
+              </div>
+            </dl>
+            <p className="mt-4 text-xs leading-5 text-muted-foreground">
+              Checkout is pay-on-delivery today — no card details are ever
+              taken online. If card payments are configured later, processing
+              fees would be passed through at cost with advance notice.{" "}
+              <Link
+                to="/sell#fees"
+                className="font-medium text-primary hover:underline"
+              >
+                Full fee breakdown →
+              </Link>
+            </p>
+          </motion.div>
         </div>
       </section>
 
@@ -410,9 +479,13 @@ export default function Landing() {
       <section className="border-t border-border/70 bg-card/30 py-14">
         <div className="page-container">
           <h2 className="text-center text-xl font-bold tracking-tight sm:text-2xl">
-            Built on trust, not fake numbers
+            Buyer protection, in plain terms
           </h2>
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <p className="mx-auto mt-2 max-w-xl text-center text-sm text-muted-foreground">
+            What this platform actually provides — no promises we don&apos;t
+            keep.
+          </p>
+          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {trustPoints.map((point) => (
               <div
                 key={point.title}
@@ -427,6 +500,20 @@ export default function Landing() {
                 </p>
               </div>
             ))}
+          </div>
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm">
+            <Link
+              to="/support"
+              className="font-medium text-primary transition-colors hover:text-primary/80"
+            >
+              Support, refunds &amp; disputes →
+            </Link>
+            <Link
+              to="/sell#fees"
+              className="font-medium text-primary transition-colors hover:text-primary/80"
+            >
+              How fees work →
+            </Link>
           </div>
           {!isLoading && user && (
             <div className="mt-8 text-center">
