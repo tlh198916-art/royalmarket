@@ -12,18 +12,20 @@ import {
 } from "@/components/ui/table";
 import { api } from "@/convex/_generated/api";
 import { formatDateTime, formatPrice, timeAgo } from "@/lib/format";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import {
   Activity,
   BadgeCheck,
   Banknote,
   Eye,
+  Loader2,
   PackageCheck,
   Pencil,
   Repeat,
   Search,
   ShieldCheck,
   ShoppingCart,
+  Sparkles,
   Store,
   Tag,
   Ticket,
@@ -59,6 +61,30 @@ export default function Admin() {
   const status = useQuery(api.admin.adminStatus);
   const stats = useQuery(api.admin.stats, status?.isAdmin ? {} : "skip");
   const [claiming, setClaiming] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
+  const backfillEmbeddings = useAction(api.ai.backfillEmbeddings);
+
+  const handleReindex = async () => {
+    setReindexing(true);
+    try {
+      const { indexed } = await backfillEmbeddings({ batchSize: 8 });
+      if (indexed > 0) {
+        toast.success(
+          `Embedded ${indexed} listing${indexed === 1 ? "" : "s"} for AI search.`,
+        );
+      } else {
+        toast.message("Every listing is already indexed for AI search.");
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Reindex failed — check GEMINI_API_KEY.",
+      );
+    } finally {
+      setReindexing(false);
+    }
+  };
   const claimAdmin = useMutation(api.admin.claimAdmin);
   const setProductStatus = useMutation(api.admin.setProductStatus);
   const setUserRole = useMutation(api.admin.setUserRole);
@@ -205,12 +231,27 @@ export default function Admin() {
               Marketplace dashboard
             </h1>
           </div>
-          <Badge
-            variant="secondary"
-            className="gap-1.5 border border-primary/40 px-3 py-1.5 text-primary"
-          >
-            <ShieldCheck className="size-3.5" /> Admin session
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleReindex()}
+              disabled={reindexing}
+            >
+              {reindexing ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : (
+                <Sparkles className="mr-2 size-4" />
+              )}
+              {reindexing ? "Indexing…" : "Rebuild AI search"}
+            </Button>
+            <Badge
+              variant="secondary"
+              className="gap-1.5 border border-primary/40 px-3 py-1.5 text-primary"
+            >
+              <ShieldCheck className="size-3.5" /> Admin session
+            </Badge>
+          </div>
         </div>
 
         {/* Headline metrics */}

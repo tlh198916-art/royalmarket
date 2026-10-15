@@ -46,7 +46,7 @@ async function sellerPublicInfo(
   };
 }
 
-async function enrich(
+export async function enrich(
   ctx: QueryCtx | MutationCtx,
   product: Doc<"products">,
 ) {

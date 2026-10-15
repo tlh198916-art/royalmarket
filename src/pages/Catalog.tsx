@@ -13,9 +13,9 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/convex/_generated/api";
 import { CATEGORIES } from "@/convex/categories";
-import { useMutation, useQuery } from "convex/react";
-import { PackageX, SearchX, SlidersHorizontal } from "lucide-react";
-import { useEffect } from "react";
+import { useAction, useMutation, useQuery } from "convex/react";
+import { PackageX, SearchX, SlidersHorizontal, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 const SORT_OPTIONS = [
@@ -57,6 +57,54 @@ export default function Catalog() {
     }
   }, [q, trackSearch]);
 
+  // AI semantic search: embeds the query and merges vector matches ahead of
+  // the keyword results. Debounced; failures fall back to keyword-only.
+  const semanticSearch = useAction(api.ai.semanticSearch);
+  type SemanticResults = Awaited<ReturnType<typeof semanticSearch>>;
+  const [semantic, setSemantic] = useState<{
+    term: string;
+    results: SemanticResults;
+  } | null>(null);
+  const [aiFailed, setAiFailed] = useState(false);
+  const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    const term = q.trim();
+    const categoryId = category || undefined;
+    const requestId = ++requestIdRef.current;
+    if (term.length < 3) return;
+    const timer = window.setTimeout(() => {
+      semanticSearch({ q: term, categoryId, limit: 40 })
+        .then((results) => {
+          if (requestIdRef.current !== requestId) return;
+          setSemantic({ term, results });
+          setAiFailed(false);
+        })
+        .catch(() => {
+          if (requestIdRef.current !== requestId) return;
+          setSemantic(null);
+          setAiFailed(true);
+        });
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [q, category, semanticSearch]);
+
+  // Show AI matches only for the query that produced them, ranked first.
+  const visibleSemantic =
+    semantic && semantic.term === q.trim() && q.trim().length >= 3
+      ? semantic.results
+      : null;
+
+  const merged = useMemo(() => {
+    if (!visibleSemantic) return products;
+    if (!products) return undefined;
+    const seen = new Set(visibleSemantic.map((p) => p._id));
+    return [
+      ...visibleSemantic,
+      ...products.filter((p) => !seen.has(p._id)),
+    ];
+  }, [visibleSemantic, products]);
+
   const updateParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(searchParams);
     if (!value) next.delete(key);
@@ -66,7 +114,7 @@ export default function Catalog() {
 
   const activeCategory = CATEGORIES.find((c) => c.id === category);
   const hasFilters = Boolean(q || category);
-  const isFilteredOut = products !== undefined && products.length === 0 && hasFilters;
+  const isFilteredOut = merged !== undefined && merged.length === 0 && hasFilters;
 
   return (
     <Layout>
@@ -81,10 +129,26 @@ export default function Catalog() {
                   : "Browse products"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {products === undefined
+              {merged === undefined
                 ? "Loading live listings…"
-                : `${products.length} ${products.length === 1 ? "listing" : "listings"} available`}
+                : `${merged.length} ${merged.length === 1 ? "listing" : "listings"} available`}
             </p>
+            {(visibleSemantic && visibleSemantic.length > 0) ||
+            (aiFailed && q.trim().length >= 3) ? (
+              <div className="mt-2.5 flex flex-wrap gap-2">
+                {visibleSemantic && visibleSemantic.length > 0 && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
+                    <Sparkles className="size-3" /> AI matches for “
+                    {q.trim()}” shown first
+                  </span>
+                )}
+                {aiFailed && q.trim().length >= 3 && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                    AI search unavailable — keyword matches only
+                  </span>
+                )}
+              </div>
+            ) : null}
           </div>
 
           <div className="max-w-xl">
@@ -152,11 +216,11 @@ export default function Catalog() {
 
         {/* Results */}
         <div className="mt-6">
-          {products === undefined ? (
+          {merged === undefined ? (
             <div className="flex justify-center py-16">
               <div className="size-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
             </div>
-          ) : products.length === 0 ? (
+          ) : merged.length === 0 ? (
             isFilteredOut ? (
               <EmptyState
                 icon={SearchX}
@@ -188,11 +252,11 @@ export default function Catalog() {
           ) : (
             <>
               <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
-                {products.map((product, index) => (
+                {merged.map((product, index) => (
                   <ProductCard key={product._id} product={product} index={index} />
                 ))}
               </div>
-              {products.length >= 60 && (
+              {merged.length >= 60 && (
                 <div className="mt-8 flex justify-center">
                   <Badge variant="secondary" className="px-4 py-2 text-xs">
                     Showing the first 60 matching listings — refine your search

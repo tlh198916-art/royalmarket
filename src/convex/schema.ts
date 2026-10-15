@@ -108,10 +108,17 @@ const schema = defineSchema(
       views: v.number(),
       soldCount: v.number(),
       moderatorNote: v.optional(v.string()),
+      // AI semantic-search embedding (768-dim Gemini); optional until indexed.
+      embedding: v.optional(v.array(v.float64())),
     })
       .index("by_status", ["status"])
       .index("by_seller", ["sellerId"])
       .index("by_category", ["categoryId"])
+      .vectorIndex("embedding", {
+        vectorField: "embedding",
+        dimensions: 768,
+        filterFields: ["status"],
+      })
       .searchIndex("search_title", {
         searchField: "title",
         filterFields: ["status"],

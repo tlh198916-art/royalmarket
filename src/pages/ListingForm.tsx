@@ -3,6 +3,14 @@ import { Layout } from "@/components/marketplace/Layout";
 import { ProductMedia } from "@/components/marketplace/ProductMedia";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -18,14 +26,16 @@ import { api } from "@/convex/_generated/api";
 import { CATEGORIES } from "@/convex/categories";
 import { useAuth } from "@/hooks/use-auth";
 import { formatPrice, parsePriceToCents } from "@/lib/format";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import {
   ArrowLeft,
   CheckCircle2,
   ImagePlus,
   Loader2,
+  RefreshCw,
   Save,
   Send,
+  Sparkles,
   Store,
   Trash2,
 } from "lucide-react";
@@ -154,8 +164,50 @@ function ListingFormInner({ editId }: { editId: string | null }) {
   const [submitting, setSubmitting] = useState(false);
   const [uploadingCount, setUploadingCount] = useState(0);
 
+  // AI listing assistant (draft copy for seller review before applying).
+  const draftListingCopy = useAction(api.ai.draftListing);
+  const reindexListing = useAction(api.ai.reindex);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiDetails, setAiDetails] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiDraft, setAiDraft] = useState<{
+    title: string;
+    description: string;
+  } | null>(null);
+
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
+
+  const handleAiDraft = async () => {
+    setAiLoading(true);
+    try {
+      const draft = await draftListingCopy({
+        title: form.title.trim() || undefined,
+        details: aiDetails.trim() || undefined,
+        categoryId: form.categoryId || undefined,
+        condition: form.condition,
+        priceCents: parsePriceToCents(form.price) ?? undefined,
+      });
+      setAiDraft(draft);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not generate a draft — try again.",
+      );
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const applyAiDraft = () => {
+    if (!aiDraft) return;
+    set("title", aiDraft.title);
+    set("description", aiDraft.description);
+    setAiDraft(null);
+    setAiOpen(false);
+    toast.success("Draft applied — review it before publishing.");
+  };
 
   const handleShopSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -280,8 +332,9 @@ function ListingFormInner({ editId }: { editId: string | null }) {
 
     setSubmitting(true);
     try {
+      let savedId: string;
       if (editId && existing) {
-        await updateListing({
+        savedId = await updateListing({
           id: existing._id,
           ...payload,
           status: publishNow ? "active" : "draft",
@@ -290,11 +343,15 @@ function ListingFormInner({ editId }: { editId: string | null }) {
           publishNow ? "Listing updated and live." : "Draft saved.",
         );
       } else {
-        await createListing({ ...payload, publish: publishNow });
+        savedId = await createListing({ ...payload, publish: publishNow });
         toast.success(
           publishNow ? "Your listing is live!" : "Draft saved to your dashboard.",
         );
       }
+      // Index the listing for AI semantic search without blocking navigation.
+      void reindexListing({ productId: savedId }).catch(() =>
+        toast.message("Saved — AI search indexing will catch up shortly."),
+      );
       navigate("/sell/dashboard");
     } catch (err) {
       toast.error(
@@ -425,11 +482,20 @@ function ListingFormInner({ editId }: { editId: string | null }) {
               Free to post · instant publish · no approval queue
             </p>
           </div>
-          {!user?.isSeller && (
-            <Button variant="outline" size="sm" onClick={() => setShopStep(true)}>
-              <Store className="mr-2 size-4" /> Set up shop first
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setAiOpen(true)}>
+              <Sparkles className="mr-2 size-4" /> Draft with AI
             </Button>
-          )}
+            {!user?.isSeller && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShopStep(true)}
+              >
+                <Store className="mr-2 size-4" /> Set up shop first
+              </Button>
+            )}
+          </div>
         </div>
 
         {existing?.status === "removed" && (
@@ -783,6 +849,97 @@ function ListingFormInner({ editId }: { editId: string | null }) {
             </div>
           </aside>
         </form>
+
+        <Dialog
+          open={aiOpen}
+          onOpenChange={(open) => {
+            setAiOpen(open);
+            if (!open) setAiDraft(null);
+          }}
+        >
+          <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="tracking-tight font-bold">
+                AI listing assistant
+              </DialogTitle>
+              <DialogDescription>
+                List key details below — the draft is only a suggestion, and
+                nothing changes until you apply it.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="aiDetails">Key details (optional)</Label>
+                <Textarea
+                  id="aiDetails"
+                  rows={4}
+                  maxLength={1500}
+                  value={aiDetails}
+                  onChange={(event) => setAiDetails(event.target.value)}
+                  placeholder="Materials, size, flaws, model number, why you're selling…"
+                />
+                <p className="text-xs text-muted-foreground">
+                  The more you share, the more specific — and honest — the draft
+                  will be. The AI never invents specs you didn't give.
+                </p>
+              </div>
+
+              {aiDraft && (
+                <div className="space-y-3 rounded-xl border border-border/70 bg-card p-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Suggested title
+                    </p>
+                    <p className="mt-1 text-sm font-semibold">
+                      {aiDraft.title}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Suggested description
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+                      {aiDraft.description}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-2">
+              {aiDraft ? (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => void handleAiDraft()}
+                    disabled={aiLoading}
+                  >
+                    {aiLoading ? (
+                      <Loader2 className="mr-2 size-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 size-4" />
+                    )}
+                    Regenerate
+                  </Button>
+                  <Button onClick={applyAiDraft}>Use this draft</Button>
+                </>
+              ) : (
+                <Button
+                  onClick={() => void handleAiDraft()}
+                  disabled={aiLoading}
+                >
+                  {aiLoading ? (
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="mr-2 size-4" />
+                  )}
+                  {aiLoading ? "Writing…" : "Generate draft"}
+                </Button>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </Layout>
   );
