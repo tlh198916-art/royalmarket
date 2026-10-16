@@ -1,7 +1,7 @@
 {
-  "name": "TLHmarketplacepro",
-  "short_name": "TLHmarketplacepro",
-  "description": "TLHmarketplacepro — buy and sell with verified sellers.",
+  "name": "Royalmarket",
+  "short_name": "Royalmarket",
+  "description": "Royalmarket — buy and sell with verified sellers.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
