@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/convex/_generated/api";
+import { bpsToPercent } from "@/convex/plans";
 import type { PlanId } from "@/convex/schema";
 import { useAuth } from "@/hooks/use-auth";
 import { formatPrice } from "@/lib/format";
@@ -20,11 +21,6 @@ import {
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { toast } from "sonner";
-
-function percent(bps: number): string {
-  const p = bps / 100;
-  return `${Number.isInteger(p) ? p : p.toFixed(2)}%`;
-}
 
 const PLAN_ORDER: PlanId[] = ["starter", "growth", "pro"];
 
@@ -172,7 +168,7 @@ export default function SellPlans() {
             </AlertTitle>
             <AlertDescription>
               {formatPrice(mySub.priceCentsMonthly)}/month ·{" "}
-              {percent(mySub.commissionBps)} commission.
+              {bpsToPercent(mySub.commissionBps)} commission.
               {mySub.status === "pending"
                 ? " Card payment isn't configured on this marketplace yet — an administrator confirms payment manually, then your plan activates. You owe nothing until then."
                 : mySub.renewsAt
@@ -227,7 +223,7 @@ export default function SellPlans() {
                   </span>
                 </p>
                 <p className="mt-1 text-sm font-semibold text-primary">
-                  {percent(plan.commissionBps)} commission per sale
+                  {bpsToPercent(plan.commissionBps)} commission per sale
                 </p>
               </button>
             );
@@ -255,7 +251,7 @@ export default function SellPlans() {
                 <dt className="text-muted-foreground">
                   Platform commission (per completed sale)
                 </dt>
-                <dd className="font-medium">{percent(chosen.commissionBps)}</dd>
+                <dd className="font-medium">{bpsToPercent(chosen.commissionBps)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">
@@ -284,7 +280,7 @@ export default function SellPlans() {
               <span className="text-xs leading-5 text-muted-foreground">
                 I agree to the seller terms: the{" "}
                 {formatPrice(chosen.priceCentsMonthly)}/month fee and{" "}
-                {percent(chosen.commissionBps)} commission on delivered sales
+                {bpsToPercent(chosen.commissionBps)} commission on delivered sales
                 for {chosen.name}, billed in USD. I understand commissions
                 don&apos;t apply to cancelled or refunded items, that I handle
                 my own fulfillment, and that I remain responsible for

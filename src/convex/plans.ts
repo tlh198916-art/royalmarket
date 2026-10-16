@@ -65,10 +65,12 @@ export const DEFAULT_PLANS: {
 /** Human-readable plan id list for validators and UI. */
 export const PLAN_IDS: PlanId[] = ["starter", "growth", "pro"];
 
-/** Basis points → percent string, e.g. 500 → "5%". */
+/** Basis points → percent string, e.g. 500 → "5%", 250 → "2.5%". */
 export function bpsToPercent(bps: number): string {
   const percent = bps / 100;
-  return `${Number.isInteger(percent) ? percent : percent.toFixed(2)}%`;
+  // toFixed(2) keeps at most 2 decimals; Number() drops trailing zeros so
+  // 250 bps reads "2.5%", not "2.50%".
+  return `${Number.isInteger(percent) ? percent : Number(percent.toFixed(2))}%`;
 }
 
 /** Compute a commission amount in cents from a base amount and bps. */

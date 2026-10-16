@@ -10,6 +10,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useCart } from "@/lib/cart";
 import { formatPrice } from "@/lib/format";
+import { computeCheckoutTotals } from "@/lib/orderTotals";
 import { useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
@@ -230,27 +231,17 @@ export default function Checkout() {
     return next;
   }, [sellerGroups, choices]);
 
-  const { itemsSubtotalCents, shippingFeeCents, totalCents } = useMemo(() => {
-    let itemsTotal = 0;
-    for (const row of rows) {
-      if (!row.live || row.quantity === 0) continue;
-      itemsTotal += row.effectivePriceCents * row.quantity;
-    }
-    // One seller-set fee per seller group — never per item, never a platform
-    // markup. Pickup is free.
-    let feeTotal = 0;
-    for (const group of sellerGroups) {
-      const chosen = group.methods.find(
-        (m) => m.method === effectiveChoices[group.sellerId],
-      );
-      feeTotal += chosen?.feeCents ?? 0;
-    }
-    return {
-      itemsSubtotalCents: itemsTotal,
-      shippingFeeCents: feeTotal,
-      totalCents: itemsTotal + feeTotal,
-    };
-  }, [rows, sellerGroups, effectiveChoices]);
+  // One seller-set fee per seller group — never per item, never a platform
+  // markup. Pickup/meetup is free. Pure math lives in lib/orderTotals.
+  const { itemsSubtotalCents, shippingFeeCents, totalCents } = useMemo(
+    () =>
+      computeCheckoutTotals({
+        lines: rows,
+        groups: sellerGroups,
+        choices: effectiveChoices,
+      }),
+    [rows, sellerGroups, effectiveChoices],
+  );
 
   const missingChoices = sellerGroups.filter(
     (group) => !effectiveChoices[group.sellerId],

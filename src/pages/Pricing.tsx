@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/convex/_generated/api";
+import { bpsToPercent, commissionCents } from "@/convex/plans";
 import { useAuth } from "@/hooks/use-auth";
 import { formatPrice } from "@/lib/format";
 import { useQuery } from "convex/react";
@@ -23,12 +24,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { Link } from "react-router";
-
-/** Percent string from basis points, e.g. 500 → "5%". */
-function percent(bps: number): string {
-  const p = bps / 100;
-  return `${Number.isInteger(p) ? p : p.toFixed(2)}%`;
-}
 
 /** Comparison rows: [feature, individual, starter, growth, pro] */
 const COMPARISON: [string, string, string, string, string][] = [
@@ -197,15 +192,13 @@ export default function Pricing() {
                   <span className="text-sm text-muted-foreground">/month</span>
                 </p>
                 <p className="mt-1.5 text-sm font-semibold text-primary">
-                  {plan ? percent(plan.commissionBps) : "—"} commission per
+                  {plan ? bpsToPercent(plan.commissionBps) : "—"} commission per
                   completed sale
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Example: a $100 sale generates{" "}
                   {plan
-                    ? formatPrice(
-                        Math.floor((10_000 * plan.commissionBps) / 10_000),
-                      )
+                    ? formatPrice(commissionCents(10_000, plan.commissionBps))
                     : "$—"}{" "}
                   in platform commission.
                 </p>
