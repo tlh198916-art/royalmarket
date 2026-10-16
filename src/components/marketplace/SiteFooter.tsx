@@ -82,10 +82,10 @@ export function SiteFooter() {
             transparently.
           </p>
           <a
-            href="mailto:support@royalmarket.example"
+            href="mailto:Myrayalmarket@gmail.com"
             className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
           >
-            <Mail className="size-3.5" /> Questions? Open a support ticket
+            <Mail className="size-3.5" /> Questions? Myrayalmarket@gmail.com
           </a>
         </div>
       </div>
