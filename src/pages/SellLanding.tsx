@@ -121,7 +121,7 @@ export default function SellLanding() {
               <span className="text-royal-gradient">income</span>
             </h1>
             <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-muted-foreground">
-              TLHmarketplacepro is free to post on. Set up a verified shop in
+              Royalmarket is free to post on. Set up a verified shop in
               minutes, publish listings with photos and live inventory, and
               manage every order from one dashboard.
             </p>
@@ -154,7 +154,7 @@ export default function SellLanding() {
         <div className="page-container">
           <motion.div {...fadeUp} className="mx-auto max-w-2xl text-center">
             <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
-              How do you want to sell on TLHmarketplacepro?
+              How do you want to sell on Royalmarket?
             </h2>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
               Everyone starts free. Upgrade only if you want a branded

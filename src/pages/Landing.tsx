@@ -454,7 +454,7 @@ export default function Landing() {
               </span>
             </h2>
             <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">
-              Sell products on TLHmarketplacepro without needing your own
+              Sell products on Royalmarket without needing your own
               website. Individuals can join for free and arrange their own
               shipping, local pickup, or delivery. Small businesses can
               upgrade to branded storefronts and professional selling tools.

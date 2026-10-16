@@ -78,11 +78,11 @@ export function SiteFooter() {
 
         <div className="mt-10 flex flex-col gap-3 border-t border-border/70 pt-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <p>
-            © {new Date().getFullYear()} TLHmarketplacepro. List free, sell
+            © {new Date().getFullYear()} Royalmarket. List free, sell
             transparently.
           </p>
           <a
-            href="mailto:support@tlhmarketplacepro.example"
+            href="mailto:support@royalmarket.example"
             className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
           >
             <Mail className="size-3.5" /> Questions? Open a support ticket
