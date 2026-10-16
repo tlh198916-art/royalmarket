@@ -15,7 +15,7 @@ import {
   AlertTriangle,
   CreditCard,
   Handshake,
-  Package,
+  MapPin,
   ShieldCheck,
   ShoppingCart,
   Truck,
@@ -23,6 +23,61 @@ import {
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
+
+type Method = "meetup" | "shipping" | "delivery";
+
+type SellerGroup = {
+  sellerId: string;
+  sellerName: string;
+  methods: {
+    method: Method;
+    feeCents: number;
+    label: string;
+    detail: string;
+  }[];
+};
+
+/**
+ * Available fulfillment methods for a product, with the seller-set fee for
+ * each. Legacy listings without configured options fall back to the
+ * original negotiate-directly behavior (pickup or shipping, no preset fee).
+ */
+function methodsForProduct(
+  fulfillment:
+    | {
+        pickup: { enabled: boolean; area?: string };
+        shipping: { enabled: boolean; feeCents: number; handlingDays: number };
+        delivery: { enabled: boolean; feeCents: number; area?: string };
+      }
+    | undefined
+    | null,
+): { method: Method; feeCents: number }[] {
+  if (!fulfillment)
+    return [
+      { method: "meetup", feeCents: 0 },
+      { method: "shipping", feeCents: 0 },
+    ];
+  const out: { method: Method; feeCents: number }[] = [];
+  if (fulfillment.pickup.enabled)
+    out.push({ method: "meetup", feeCents: 0 });
+  if (fulfillment.shipping.enabled)
+    out.push({
+      method: "shipping",
+      feeCents: Math.round(fulfillment.shipping.feeCents),
+    });
+  if (fulfillment.delivery.enabled)
+    out.push({
+      method: "delivery",
+      feeCents: Math.round(fulfillment.delivery.feeCents),
+    });
+  return out;
+}
+
+const methodMeta: Record<Method, { icon: typeof Truck; label: string }> = {
+  meetup: { icon: Handshake, label: "Local pickup" },
+  shipping: { icon: Truck, label: "Shipping" },
+  delivery: { icon: MapPin, label: "Local delivery" },
+};
 
 export default function Checkout() {
   const { lines, setQuantity, remove, clear } = useCart();
@@ -32,7 +87,8 @@ export default function Checkout() {
   const placeOrder = useMutation(api.orders.place);
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
-  const [method, setMethod] = useState<"meetup" | "shipping">("meetup");
+  // Per-seller method choice: sellerId -> method.
+  const [choices, setChoices] = useState<Record<string, Method>>({});
 
   const liveById = useMemo(() => {
     const map = new Map<string, NonNullable<typeof liveProducts>[number]>();
@@ -53,6 +109,7 @@ export default function Checkout() {
         quantity: line.quantity,
         effectivePriceCents: line.priceCents,
         sellerId: "",
+        sellerName: line.sellerName ?? "Seller",
       };
     }
     const quantity = Math.min(line.quantity, live.quantity);
@@ -68,6 +125,8 @@ export default function Checkout() {
       quantity,
       effectivePriceCents: live.priceCents,
       sellerId: live.sellerId,
+      sellerName:
+        live.seller?.shopName ?? live.seller?.name ?? line.sellerName ?? "Seller",
     };
   });
 
@@ -76,19 +135,126 @@ export default function Checkout() {
   );
   const hasBlockingIssue = blockingIssues.length > 0;
 
-  const { itemsSubtotalCents, totalCents } = useMemo(() => {
+  // Group buyable rows by seller and intersect their method availability
+  // (a method must be offered by every listing in the group).
+  const sellerGroups: SellerGroup[] = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        sellerName: string;
+        methods: Map<Method, { feeCents: number; label: string; detail: string }>;
+        seen: boolean;
+      }
+    >();
+    for (const row of rows) {
+      if (!row.live || row.quantity === 0 || !row.sellerId) continue;
+      let group = groups.get(row.sellerId);
+      if (!group) {
+        const methods = new Map<
+          Method,
+          { feeCents: number; label: string; detail: string }
+        >();
+        for (const m of methodsForProduct(row.live.fulfillment)) {
+          const meta = methodMeta[m.method];
+          methods.set(m.method, {
+            feeCents: m.feeCents,
+            label: meta.label,
+            detail:
+              m.method === "meetup"
+                ? (row.live.fulfillment?.pickup.area
+                    ? `Pickup in ${row.live.fulfillment.pickup.area} — details shared after ordering`
+                    : "Arrange a meetup directly with the seller")
+                : m.method === "shipping"
+                  ? (row.live.fulfillment
+                      ? `Ships in ~${row.live.fulfillment.shipping.handlingDays}d${
+                          row.live.fulfillment.shipping.carrier
+                            ? ` via ${row.live.fulfillment.shipping.carrier}`
+                            : ""
+                        }`
+                      : "Cost and carrier arranged with the seller")
+                  : (row.live.fulfillment?.delivery.area
+                      ? `Delivery in ${row.live.fulfillment.delivery.area}`
+                      : "Local delivery arranged with the seller"),
+          });
+        }
+        group = { sellerName: row.sellerName, methods, seen: false };
+        groups.set(row.sellerId, group);
+      }
+      group.seen = true;
+      // Intersection: keep only methods this row also offers; the fee is the
+      // max across the seller's lines (charged once per seller).
+      for (const m of methodsForProduct(row.live.fulfillment)) {
+        const current = group.methods.get(m.method);
+        if (current) {
+          current.feeCents = Math.max(current.feeCents, m.feeCents);
+        } else {
+          const meta = methodMeta[m.method];
+          group.methods.set(m.method, {
+            feeCents: m.feeCents,
+            label: meta.label,
+            detail: "Arranged with the seller",
+          });
+        }
+      }
+      // Remove methods not offered by this row.
+      for (const key of [...group.methods.keys()]) {
+        if (!methodsForProduct(row.live!.fulfillment).some((m) => m.method === key)) {
+          group.methods.delete(key);
+        }
+      }
+    }
+    return [...groups.entries()].map(([sellerId, group]) => ({
+      sellerId,
+      sellerName: group.sellerName,
+      methods: [...group.methods.entries()].map(([method, info]) => ({
+        method,
+        feeCents: info.feeCents,
+        label: info.label,
+        detail: info.detail,
+      })),
+    }));
+  }, [rows]);
+
+  // Effective choices: keep valid picks, default each seller to their first
+  // available method. Derived during render — no effect needed.
+  const effectiveChoices = useMemo(() => {
+    const next: Record<string, Method> = {};
+    for (const group of sellerGroups) {
+      const current = choices[group.sellerId];
+      if (current && group.methods.some((m) => m.method === current)) {
+        next[group.sellerId] = current;
+      } else if (group.methods[0]) {
+        next[group.sellerId] = group.methods[0].method;
+      }
+    }
+    return next;
+  }, [sellerGroups, choices]);
+
+  const { itemsSubtotalCents, shippingFeeCents, totalCents } = useMemo(() => {
     let itemsTotal = 0;
     for (const row of rows) {
       if (!row.live || row.quantity === 0) continue;
       itemsTotal += row.effectivePriceCents * row.quantity;
     }
-    // Shipping is arranged directly between buyer and seller — no platform
-    // fees, and no address collected up front.
+    // One seller-set fee per seller group — never per item, never a platform
+    // markup. Pickup is free.
+    let feeTotal = 0;
+    for (const group of sellerGroups) {
+      const chosen = group.methods.find(
+        (m) => m.method === effectiveChoices[group.sellerId],
+      );
+      feeTotal += chosen?.feeCents ?? 0;
+    }
     return {
       itemsSubtotalCents: itemsTotal,
-      totalCents: itemsTotal,
+      shippingFeeCents: feeTotal,
+      totalCents: itemsTotal + feeTotal,
     };
-  }, [rows]);
+  }, [rows, sellerGroups, effectiveChoices]);
+
+  const missingChoices = sellerGroups.filter(
+    (group) => !effectiveChoices[group.sellerId],
+  );
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -96,7 +262,12 @@ export default function Checkout() {
       toast.error("Resolve the highlighted cart issues first.");
       return;
     }
+    if (missingChoices.length > 0) {
+      toast.error("Choose a fulfillment option for every seller.");
+      return;
+    }
     const formData = new FormData(event.currentTarget);
+    const note = String(formData.get("fulfillmentNote") ?? "") || undefined;
     setSubmitting(true);
     try {
       const orderId = await placeOrder({
@@ -106,14 +277,17 @@ export default function Checkout() {
             productId: row.line.productId as Id<"products">,
             quantity: row.quantity,
           })),
-        method,
-        note: String(formData.get("fulfillmentNote") ?? "") || undefined,
+        fulfillments: sellerGroups.map((group) => ({
+          sellerId: group.sellerId as Id<"users">,
+          method: effectiveChoices[group.sellerId],
+          note,
+        })),
         paymentMethod: "cod",
       });
       clear();
       toast.success("Order placed!", {
         description:
-          "Agree on meet-up or shipping with your seller — both of you approve the deal from your orders page.",
+          "Your sellers confirm the arrangement from their dashboard — track everything from your orders page.",
       });
       navigate(`/orders?placed=${orderId}`);
     } catch (error) {
@@ -184,7 +358,8 @@ export default function Checkout() {
                           {row.line.title}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {formatPrice(row.effectivePriceCents)} each
+                          {formatPrice(row.effectivePriceCents)} each · from{" "}
+                          {row.sellerName}
                         </p>
                       </div>
                       <p className="text-sm font-bold">
@@ -242,82 +417,100 @@ export default function Checkout() {
               ))}
             </section>
 
-            {/* Fulfillment arrangement */}
-            <section className="rounded-2xl border border-border/70 bg-card p-6">
-              <h2 className="text-sm font-bold tracking-tight">
-                How will you get it?
-              </h2>
-              <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-                No shipping fees are charged here. You and the seller agree on
-                the details yourselves — meet up or arrange shipping — and
-                both approve the deal from your orders page before handoff.
-              </p>
-              <RadioGroup
-                value={method}
-                onValueChange={(value) =>
-                  setMethod(value === "shipping" ? "shipping" : "meetup")
-                }
-                className="mt-4 space-y-3"
-              >
-                <label
-                  htmlFor="method-meetup"
-                  className="flex cursor-pointer items-start gap-3 rounded-xl border border-primary/50 bg-primary/5 p-4"
+            {/* Per-seller fulfillment choices */}
+            <section className="space-y-4">
+              <div>
+                <h2 className="text-sm font-bold tracking-tight">
+                  How will you get it?
+                </h2>
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                  Each seller sets their own options and fees. Fees are added
+                  once per seller — never per item — and there is no platform
+                  shipping charge.
+                </p>
+              </div>
+
+              {sellerGroups.map((group) => (
+                <div
+                  key={group.sellerId}
+                  className="rounded-2xl border border-border/70 bg-card p-5"
                 >
-                  <RadioGroupItem
-                    id="method-meetup"
-                    value="meetup"
-                    className="mt-0.5"
-                  />
-                  <span className="flex-1">
-                    <span className="flex items-center gap-2 text-sm font-semibold">
-                      <Handshake className="size-4 text-primary" /> Meet up
-                    </span>
-                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                      Coordinate a public meet-up or local pickup directly with
-                      the seller.
-                    </span>
-                  </span>
-                </label>
-                <label
-                  htmlFor="method-shipping"
-                  className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 p-4 transition-colors hover:border-primary/50"
-                >
-                  <RadioGroupItem
-                    id="method-shipping"
-                    value="shipping"
-                    className="mt-0.5"
-                  />
-                  <span className="flex-1">
-                    <span className="flex items-center gap-2 text-sm font-semibold">
-                      <Package className="size-4" /> Shipping — arranged
-                      directly
-                    </span>
-                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                      You and the seller agree on carrier, cost, and timing
-                      between yourselves — the platform adds no shipping
-                      charges.
-                    </span>
-                  </span>
-                </label>
-              </RadioGroup>
-              <div className="mt-4 space-y-1.5">
+                  <p className="text-sm font-semibold">
+                    From {group.sellerName}
+                  </p>
+                  <RadioGroup
+                    value={effectiveChoices[group.sellerId] ?? ""}
+                    onValueChange={(value) =>
+                      setChoices((prev) => ({
+                        ...prev,
+                        [group.sellerId]: value as Method,
+                      }))
+                    }
+                    className="mt-3 space-y-3"
+                  >
+                    {group.methods.map((option) => {
+                      const Icon = methodMeta[option.method].icon;
+                      return (
+                        <label
+                          key={option.method}
+                          htmlFor={`method-${group.sellerId}-${option.method}`}
+                          className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors ${
+                            effectiveChoices[group.sellerId] === option.method
+                              ? "border-primary/50 bg-primary/5"
+                              : "border-border/70 hover:border-primary/50"
+                          }`}
+                        >
+                          <RadioGroupItem
+                            id={`method-${group.sellerId}-${option.method}`}
+                            value={option.method}
+                            className="mt-0.5"
+                          />
+                          <span className="flex-1">
+                            <span className="flex items-center justify-between gap-2 text-sm font-semibold">
+                              <span className="flex items-center gap-2">
+                                <Icon
+                                  className={`size-4 ${
+                                    effectiveChoices[group.sellerId] ===
+                                    option.method
+                                      ? "text-primary"
+                                      : ""
+                                  }`}
+                                />
+                                {option.label}
+                              </span>
+                              <span className="font-bold">
+                                {option.feeCents === 0
+                                  ? "Free"
+                                  : formatPrice(option.feeCents)}
+                              </span>
+                            </span>
+                            <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                              {option.detail}
+                              {option.feeCents > 0 &&
+                                " — seller-set fee, added once for this seller"}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </RadioGroup>
+                </div>
+              ))}
+
+              <div className="space-y-1.5">
                 <Label htmlFor="fulfillmentNote">
-                  Your suggested arrangement (optional)
+                  Note for all sellers (optional)
                 </Label>
                 <Textarea
                   id="fulfillmentNote"
                   name="fulfillmentNote"
                   rows={3}
                   maxLength={500}
-                  placeholder={
-                    method === "meetup"
-                      ? "e.g. Meet Saturday at the central library, daytime"
-                      : "e.g. Happy to ship — we'll confirm courier and cost together"
-                  }
+                  placeholder="e.g. Prefer weekend pickup; happy to pay by cash on handoff"
                 />
                 <p className="text-xs text-muted-foreground">
-                  The seller can reply with a counter-proposal. Both of you
-                  approve the final deal on the order page.
+                  Sellers confirm the arrangement from their dashboard. Both of
+                  you approve before handoff.
                 </p>
               </div>
             </section>
@@ -336,7 +529,8 @@ export default function Checkout() {
                       <Truck className="size-4 text-primary" /> Pay on delivery
                     </span>
                     <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                      Hand payment to the seller when you receive the item.
+                      Hand payment to the seller when you receive the item —
+                      including any seller-set fulfillment fee shown above.
                       Nothing is charged online today.
                     </span>
                   </span>
@@ -372,9 +566,19 @@ export default function Checkout() {
               <h2 className="text-sm font-bold tracking-tight">Order summary</h2>
               <dl className="mt-4 space-y-2.5 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Subtotal</dt>
+                  <dt className="text-muted-foreground">Items</dt>
                   <dd className="font-medium">
                     {formatPrice(itemsSubtotalCents)}
+                  </dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">
+                    Seller fulfillment fees
+                  </dt>
+                  <dd className="font-medium">
+                    {shippingFeeCents === 0
+                      ? "Free"
+                      : formatPrice(shippingFeeCents)}
                   </dd>
                 </div>
                 <div className="flex justify-between border-t border-border/70 pt-2.5 text-base">
@@ -382,6 +586,11 @@ export default function Checkout() {
                   <dd className="font-bold">{formatPrice(totalCents)}</dd>
                 </div>
               </dl>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                Fees above are set by sellers, not the platform. No payment
+                processing fee is charged today because payment happens on
+                delivery.
+              </p>
 
               {hasBlockingIssue && (
                 <Alert variant="destructive" className="mt-4">
@@ -397,9 +606,16 @@ export default function Checkout() {
                 type="submit"
                 size="lg"
                 className="mt-5 w-full"
-                disabled={submitting || hasBlockingIssue || liveProducts === undefined}
+                disabled={
+                  submitting ||
+                  hasBlockingIssue ||
+                  liveProducts === undefined ||
+                  missingChoices.length > 0
+                }
               >
-                {submitting ? "Placing order…" : `Place order · ${formatPrice(totalCents)}`}
+                {submitting
+                  ? "Placing order…"
+                  : `Place order · ${formatPrice(totalCents)}`}
               </Button>
 
               <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-muted-foreground">

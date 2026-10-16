@@ -443,35 +443,98 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Seller CTA */}
+      {/* Two-tier seller value prop */}
       <section className="pb-14 sm:pb-20">
         <div className="page-container">
-          <motion.div
-            {...fadeUp}
-            className="relative overflow-hidden rounded-3xl border border-primary/40 bg-gradient-to-br from-primary/20 via-card to-card p-8 sm:p-12"
-          >
-            <div className="max-w-2xl">
-              <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
-                Open your shop — free
-              </h2>
-              <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">
-                Post as many listings as you like for $0. No commission on
-                sales at launch, no subscription, and no approval queue:
-                listings publish instantly and are only taken down if they
-                break the rules.
-              </p>
-              <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-                <Button asChild size="lg">
-                  <Link to="/sell">
-                    Start selling <ArrowRight className="ml-2 size-4" />
-                  </Link>
-                </Button>
-                <Button asChild size="lg" variant="outline">
-                  <Link to="/sell#fees">See how fees work</Link>
-                </Button>
-              </div>
-            </div>
+          <motion.div {...fadeUp} className="mx-auto max-w-3xl text-center">
+            <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+              Start Selling for Free.{" "}
+              <span className="text-royal-gradient">
+                Grow Your Business on Your Terms.
+              </span>
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">
+              Sell products on TLHmarketplacepro without needing your own
+              website. Individuals can join for free and arrange their own
+              shipping, local pickup, or delivery. Small businesses can
+              upgrade to branded storefronts and professional selling tools.
+            </p>
           </motion.div>
+
+          <div className="mt-9 grid gap-5 lg:grid-cols-2">
+            {/* Sell as an Individual */}
+            <motion.div
+              {...fadeUp}
+              className="flex flex-col rounded-3xl border border-primary/40 bg-card p-6 sm:p-8"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-lg font-bold tracking-tight">
+                  Sell as an Individual
+                </h3>
+                <Badge className="bg-emerald-500/15 text-emerald-400">
+                  Free forever
+                </Badge>
+              </div>
+              <ul className="mt-4 flex-1 space-y-2 text-sm">
+                {[
+                  "Free seller account",
+                  "List products on the marketplace",
+                  "Choose local pickup, shipping, or local delivery",
+                  "Set your own shipping and handling charges",
+                  "No monthly subscription",
+                  "No personal website required",
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-2">
+                    <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-400" />
+                    <span className="leading-5">{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <Button asChild size="lg" className="mt-6">
+                <Link to="/sell">
+                  Start selling free <ArrowRight className="ml-2 size-4" />
+                </Link>
+              </Button>
+            </motion.div>
+
+            {/* Grow Your Small Business */}
+            <motion.div
+              {...fadeUp}
+              className="flex flex-col rounded-3xl border border-border/70 bg-card p-6 sm:p-8"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-lg font-bold tracking-tight">
+                  Grow Your Small Business
+                </h3>
+                <Badge variant="outline">From $29/month</Badge>
+              </div>
+              <ul className="mt-4 flex-1 space-y-2 text-sm">
+                {[
+                  "Professional business storefront",
+                  "Custom branding — logo, banner, storefront URL",
+                  "Advanced inventory and analytics",
+                  "Business tools and order management",
+                  "Flexible subscription tiers — $29, $79, $199/month",
+                  "Commission rates based on the selected plan — 5%, 3%, or 1%",
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-2">
+                    <Sparkles className="mt-0.5 size-4 shrink-0 text-primary" />
+                    <span className="leading-5">{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <Button asChild size="lg" variant="outline" className="mt-6">
+                <Link to="/pricing">
+                  Explore business plans <ArrowRight className="ml-2 size-4" />
+                </Link>
+              </Button>
+            </motion.div>
+          </div>
+
+          <p className="mx-auto mt-5 max-w-2xl text-center text-xs leading-5 text-muted-foreground">
+            All prices in USD. Upgrading keeps every product, order, and review
+            you&apos;ve already built. <Link to="/pricing" className="text-primary hover:underline">Compare plans and fees →</Link>
+          </p>
         </div>
       </section>
 

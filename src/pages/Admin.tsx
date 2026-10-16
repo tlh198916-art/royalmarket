@@ -1,3 +1,4 @@
+import { PlatformSettings } from "@/components/admin/PlatformSettings";
 import { EmptyState } from "@/components/marketplace/EmptyState";
 import { Layout } from "@/components/marketplace/Layout";
 import { Badge } from "@/components/ui/badge";
@@ -720,6 +721,11 @@ export default function Admin() {
               ))}
             </div>
           )}
+        </section>
+
+        {/* Platform settings: plans, commissions, subscriptions */}
+        <section className="mt-6">
+          <PlatformSettings />
         </section>
       </div>
     </Layout>

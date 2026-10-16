@@ -18,6 +18,7 @@ import {
   ArrowLeft,
   CalendarClock,
   CheckCircle2,
+  Handshake,
   MapPin,
   Package,
   RotateCcw,
@@ -140,7 +141,69 @@ export default function ProductDetail() {
   );
   const activeImage = imageUrls[activeIndex] ?? null;
   const purchasable = product.available;
-  const fulfillmentHint = "Meet up or ship directly";
+  const ff = product.fulfillment;
+  // Legacy listings (no configured options) keep the original wording.
+  const fulfillmentOptions: {
+    icon: typeof Truck;
+    label: string;
+    detail: string;
+  }[] = ff
+    ? [
+        ...(ff.pickup.enabled
+          ? [
+              {
+                icon: Handshake,
+                label: "Local pickup",
+                detail: ff.pickup.area
+                  ? `Pickup in ${ff.pickup.area} — details shared after ordering`
+                  : "Arrange pickup with the seller",
+              },
+            ]
+          : []),
+        ...(ff.shipping.enabled
+          ? [
+              {
+                icon: Truck,
+                label: "Shipping",
+                detail: `Ships in ~${ff.shipping.handlingDays} day${ff.shipping.handlingDays === 1 ? "" : "s"}${
+                  ff.shipping.carrier ? ` via ${ff.shipping.carrier}` : ""
+                } · ${
+                  ff.shipping.feeCents === 0
+                    ? "Free shipping"
+                    : `${formatPrice(ff.shipping.feeCents)} (set by seller)`
+                }`,
+              },
+            ]
+          : []),
+        ...(ff.delivery.enabled
+          ? [
+              {
+                icon: MapPin,
+                label: "Local delivery",
+                detail: `${ff.delivery.area ?? "Local area"} · ${
+                  ff.delivery.feeCents === 0
+                    ? "Free delivery"
+                    : `${formatPrice(ff.delivery.feeCents)} (set by seller)`
+                }${
+                  ff.delivery.estimatedDays !== undefined
+                    ? ` · ~${ff.delivery.estimatedDays}d`
+                    : ""
+                }`,
+              },
+            ]
+          : []),
+      ]
+    : [
+        {
+          icon: Truck,
+          label: "Meet up or shipping",
+          detail:
+            "Arrange the details and any cost directly with the seller",
+        },
+      ];
+  const fulfillmentHint = fulfillmentOptions
+    .map((o) => o.label)
+    .join(" · ");
   const maxQty = Math.max(1, Math.min(product.quantity, 20));
   const qty = Math.min(quantity, maxQty);
   const sellerName =
@@ -427,14 +490,31 @@ export default function ProductDetail() {
 
             {/* Policy chips */}
             <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              <div className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-card p-3.5">
-                <Truck className="mt-0.5 size-4 shrink-0 text-primary" />
-                <div className="text-xs leading-5">
-                  <p className="font-semibold">Meet up or shipping</p>
-                  <p className="text-muted-foreground">
-                    Agree the details directly with the seller — both of you
-                    approve the deal before handoff. No platform shipping fees.
-                  </p>
+              <div className="rounded-xl border border-border/70 bg-card p-3.5">
+                <div className="flex items-start gap-2.5">
+                  <Truck className="mt-0.5 size-4 shrink-0 text-primary" />
+                  <div className="text-xs leading-5">
+                    <p className="font-semibold">
+                      {ff ? "Fulfillment options" : "Meet up or shipping"}
+                    </p>
+                    <ul className="mt-1 space-y-1.5 text-muted-foreground">
+                      {fulfillmentOptions.map((option) => (
+                        <li key={option.label} className="flex items-start gap-1.5">
+                          <option.icon className="mt-0.5 size-3.5 shrink-0" />
+                          <span>
+                            <span className="font-medium text-foreground">
+                              {option.label}
+                            </span>{" "}
+                            — {option.detail}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1.5 text-muted-foreground">
+                      Arranged between you and the seller — both approve
+                      before handoff.
+                    </p>
+                  </div>
                 </div>
               </div>
               <div className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-card p-3.5">

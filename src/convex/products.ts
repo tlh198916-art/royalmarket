@@ -22,6 +22,103 @@ const returnsArgs = v.object({
   days: v.number(),
 });
 
+const fulfillmentArgs = v.object({
+  pickup: v.object({
+    enabled: v.boolean(),
+    area: v.optional(v.string()),
+    instructions: v.optional(v.string()),
+  }),
+  shipping: v.object({
+    enabled: v.boolean(),
+    feeCents: v.number(),
+    handlingDays: v.number(),
+    carrier: v.optional(v.string()),
+    method: v.optional(v.string()),
+  }),
+  delivery: v.object({
+    enabled: v.boolean(),
+    feeCents: v.number(),
+    area: v.optional(v.string()),
+    estimatedDays: v.optional(v.number()),
+    contactRequired: v.boolean(),
+  }),
+});
+
+/** Validate + normalize a seller's per-product fulfillment settings. */
+function normalizeFulfillment(input: {
+  pickup: { enabled: boolean; area?: string; instructions?: string };
+  shipping: {
+    enabled: boolean;
+    feeCents: number;
+    handlingDays: number;
+    carrier?: string;
+    method?: string;
+  };
+  delivery: {
+    enabled: boolean;
+    feeCents: number;
+    area?: string;
+    estimatedDays?: number;
+    contactRequired: boolean;
+  };
+}) {
+  if (!input.pickup.enabled && !input.shipping.enabled && !input.delivery.enabled) {
+    throw new Error(
+      "Enable at least one fulfillment option: local pickup, shipping, or local delivery.",
+    );
+  }
+  const clean = (s: string | undefined, max: number) =>
+    s?.trim().slice(0, max) || undefined;
+  for (const fee of [input.shipping.feeCents, input.delivery.feeCents]) {
+    if (!Number.isFinite(fee) || fee < 0 || fee > 1_000_00)
+      throw new Error("Fulfillment fees must be between $0 and $1,000.");
+  }
+  if (
+    !Number.isInteger(input.shipping.handlingDays) ||
+    input.shipping.handlingDays < 0 ||
+    input.shipping.handlingDays > 60
+  )
+    throw new Error("Handling time must be 0–60 days.");
+  if (
+    input.delivery.estimatedDays !== undefined &&
+    (!Number.isInteger(input.delivery.estimatedDays) ||
+      input.delivery.estimatedDays < 0 ||
+      input.delivery.estimatedDays > 60)
+  )
+    throw new Error("Estimated delivery must be 0–60 days.");
+  if (input.pickup.enabled && !clean(input.pickup.area, 120))
+    throw new Error("Add a pickup city or general area (not your address).");
+  if (input.delivery.enabled && !clean(input.delivery.area, 120))
+    throw new Error("Add the local area you deliver to.");
+  if (
+    (input.pickup.area?.length ?? 0) > 120 ||
+    (input.delivery.area?.length ?? 0) > 120
+  )
+    throw new Error("Pickup/delivery areas must be 120 characters or fewer.");
+
+  return {
+    pickup: {
+      enabled: input.pickup.enabled,
+      area: clean(input.pickup.area, 120),
+      instructions: clean(input.pickup.instructions, 500),
+    },
+    shipping: {
+      enabled: input.shipping.enabled,
+      feeCents: Math.round(input.shipping.feeCents),
+      handlingDays: input.shipping.handlingDays,
+      carrier: clean(input.shipping.carrier, 60),
+      method: clean(input.shipping.method, 60),
+    },
+    delivery: {
+      enabled: input.delivery.enabled,
+      feeCents: Math.round(input.delivery.feeCents),
+      area: clean(input.delivery.area, 120),
+      estimatedDays: input.delivery.estimatedDays,
+      contactRequired: input.delivery.contactRequired,
+    },
+  };
+}
+
 async function sellerPublicInfo(
   ctx: QueryCtx | MutationCtx,
   sellerId: Id<"users">,
@@ -37,6 +134,7 @@ async function sellerPublicInfo(
     isSeller: !!seller.isSeller,
     joinedAt: seller._creationTime,
     image: seller.image,
+    sellerType: seller.sellerType ?? "individual",
   };
 }
 
@@ -79,6 +177,11 @@ export const list = query({
     sortBy: v.optional(sortValidator),
     sellerId: v.optional(v.string()),
     limit: v.optional(v.number()),
+    // Filter by fulfillment availability. Listings created before the
+    // fulfillment feature (no config) count as pickup/shipping-capable.
+    fulfillment: v.optional(
+      v.union(v.literal("pickup"), v.literal("shipping"), v.literal("delivery")),
+    ),
   },
   handler: async (ctx, args) => {
     const limit = Math.min(Math.max(args.limit ?? 48, 1), 200);
@@ -132,6 +235,19 @@ export const list = query({
 
     if (args.categoryId) {
       candidates = candidates.filter((p) => p.categoryId === args.categoryId);
+    }
+
+    if (args.fulfillment) {
+      candidates = candidates.filter((p) => {
+        if (!p.fulfillment) {
+          // Legacy listings: pickup or shipping negotiated directly.
+          return args.fulfillment !== "delivery";
+        }
+        if (args.fulfillment === "pickup") return p.fulfillment.pickup.enabled;
+        if (args.fulfillment === "shipping")
+          return p.fulfillment.shipping.enabled;
+        return p.fulfillment.delivery.enabled;
+      });
     }
 
     const sorted = applySort(candidates, args.sortBy ?? "newest").slice(
@@ -212,6 +328,7 @@ export const create = mutation({
     ),
     imageStorageIds: v.optional(v.array(v.string())),
     returns: returnsArgs,
+    fulfillment: fulfillmentArgs,
     publish: v.boolean(),
   },
   handler: async (ctx, args) => {
@@ -248,6 +365,7 @@ export const create = mutation({
         accepted: args.returns.accepted,
         days: args.returns.accepted ? args.returns.days : 0,
       },
+      fulfillment: normalizeFulfillment(args.fulfillment),
       status: args.publish ? "active" : "draft",
       views: 0,
       soldCount: 0,
@@ -280,6 +398,7 @@ export const update = mutation({
     ),
     imageStorageIds: v.optional(v.array(v.string())),
     returns: returnsArgs,
+    fulfillment: fulfillmentArgs,
     status: v.union(v.literal("draft"), v.literal("active")),
   },
   handler: async (ctx, args) => {
@@ -320,6 +439,7 @@ export const update = mutation({
         accepted: args.returns.accepted,
         days: args.returns.accepted ? args.returns.days : 0,
       },
+      fulfillment: normalizeFulfillment(args.fulfillment),
       status: args.status,
     });
 

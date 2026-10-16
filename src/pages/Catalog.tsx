@@ -25,10 +25,22 @@ const SORT_OPTIONS = [
   { value: "price_desc", label: "Price: high to low" },
 ] as const;
 
+const FULFILLMENT_OPTIONS = [
+  { value: "pickup", label: "🏷️ Local pickup" },
+  { value: "shipping", label: "🚚 Shipping" },
+  { value: "delivery", label: "📍 Local delivery" },
+] as const;
+
 export default function Catalog() {
   const [searchParams, setSearchParams] = useSearchParams();
   const q = searchParams.get("q") ?? "";
   const category = searchParams.get("category") ?? "";
+  const fulfillmentParam = searchParams.get("fulfillment") ?? "";
+  const fulfillment = (["pickup", "shipping", "delivery"] as const).includes(
+    fulfillmentParam as "pickup" | "shipping" | "delivery",
+  )
+    ? (fulfillmentParam as "pickup" | "shipping" | "delivery")
+    : undefined;
   const sortParam = searchParams.get("sort") ?? "newest";
   const sort = SORT_OPTIONS.some((o) => o.value === sortParam)
     ? sortParam
@@ -38,6 +50,7 @@ export default function Catalog() {
     q: q || undefined,
     categoryId: category || undefined,
     sortBy: sort as "newest" | "popular" | "price_asc" | "price_desc",
+    fulfillment,
     limit: 60,
   });
 
@@ -113,7 +126,7 @@ export default function Catalog() {
   };
 
   const activeCategory = CATEGORIES.find((c) => c.id === category);
-  const hasFilters = Boolean(q || category);
+  const hasFilters = Boolean(q || category || fulfillment);
   const isFilteredOut = merged !== undefined && merged.length === 0 && hasFilters;
 
   return (
@@ -180,6 +193,32 @@ export default function Catalog() {
                 }`}
               >
                 <span aria-hidden>{c.emoji}</span> {c.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Fulfillment filters */}
+          <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0">
+            <span className="shrink-0 self-center pr-1 text-xs font-medium text-muted-foreground">
+              Fulfillment:
+            </span>
+            {FULFILLMENT_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() =>
+                  updateParam(
+                    "fulfillment",
+                    fulfillment === option.value ? null : option.value,
+                  )
+                }
+                className={`shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                  fulfillment === option.value
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border/80 bg-card text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                }`}
+              >
+                {option.label}
               </button>
             ))}
           </div>

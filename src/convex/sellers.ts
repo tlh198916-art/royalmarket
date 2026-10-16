@@ -2,12 +2,42 @@ import { v } from "convex/values";
 import { requireVerifiedUser } from "./lib";
 import { mutation, query } from "./_generated/server";
 
-/** Start (or update) a public seller profile. Verified accounts only. */
+const defaultFulfillmentArgs = v.object({
+  pickup: v.object({
+    enabled: v.boolean(),
+    area: v.optional(v.string()),
+    instructions: v.optional(v.string()),
+  }),
+  shipping: v.object({
+    enabled: v.boolean(),
+    feeCents: v.number(),
+    handlingDays: v.number(),
+    carrier: v.optional(v.string()),
+    method: v.optional(v.string()),
+  }),
+  delivery: v.object({
+    enabled: v.boolean(),
+    feeCents: v.number(),
+    area: v.optional(v.string()),
+    estimatedDays: v.optional(v.number()),
+    contactRequired: v.boolean(),
+  }),
+});
+
+/**
+ * Start (or update) a public seller profile. Verified accounts only.
+ * Individual sellers are free forever; business sellers additionally need an
+ * active subscription for business-only features (enforced where they're
+ * used, not here — upgrading must never block or erase an existing seller).
+ */
 export const become = mutation({
   args: {
     shopName: v.string(),
     bio: v.optional(v.string()),
     location: v.optional(v.string()),
+    sellerType: v.optional(
+      v.union(v.literal("individual"), v.literal("business")),
+    ),
   },
   handler: async (ctx, args) => {
     const user = await requireVerifiedUser(ctx);
@@ -24,8 +54,107 @@ export const become = mutation({
       shopName,
       sellerBio: bio,
       location,
+      // Keep an existing business type unless explicitly downgrading here;
+      // individual selling never requires business registration.
+      sellerType: args.sellerType ?? user.sellerType ?? "individual",
       name: user.name ?? shopName,
     });
+    return true;
+  },
+});
+
+/** Save the seller's default fulfillment settings (used for new listings). */
+export const setFulfillmentDefaults = mutation({
+  args: { defaults: defaultFulfillmentArgs },
+  handler: async (ctx, args) => {
+    const user = await requireVerifiedUser(ctx);
+    if (!user.isSeller)
+      throw new Error("Set up your seller profile first.");
+    const clean = (s: string | undefined, max: number) =>
+      s?.trim().slice(0, max) || undefined;
+    if (args.defaults.pickup.area && args.defaults.pickup.area.length > 120)
+      throw new Error("Pickup area must be 120 characters or fewer.");
+    if (args.defaults.delivery.area && args.defaults.delivery.area.length > 120)
+      throw new Error("Delivery area must be 120 characters or fewer.");
+    for (const fee of [
+      args.defaults.shipping.feeCents,
+      args.defaults.delivery.feeCents,
+    ]) {
+      if (!Number.isFinite(fee) || fee < 0 || fee > 1_000_00)
+        throw new Error("Fees must be between $0 and $1,000.");
+    }
+    await ctx.db.patch(user._id, {
+      defaultFulfillment: {
+        pickup: {
+          enabled: args.defaults.pickup.enabled,
+          area: clean(args.defaults.pickup.area, 120),
+          instructions: clean(args.defaults.pickup.instructions, 500),
+        },
+        shipping: {
+          enabled: args.defaults.shipping.enabled,
+          feeCents: Math.round(args.defaults.shipping.feeCents),
+          handlingDays: Math.min(
+            60,
+            Math.max(0, Math.round(args.defaults.shipping.handlingDays)),
+          ),
+          carrier: clean(args.defaults.shipping.carrier, 60),
+          method: clean(args.defaults.shipping.method, 60),
+        },
+        delivery: {
+          enabled: args.defaults.delivery.enabled,
+          feeCents: Math.round(args.defaults.delivery.feeCents),
+          area: clean(args.defaults.delivery.area, 120),
+          estimatedDays: args.defaults.delivery.estimatedDays,
+          contactRequired: args.defaults.delivery.contactRequired,
+        },
+      },
+    });
+    return true;
+  },
+});
+
+/** Business sellers: update storefront branding. Gated on an active plan. */
+export const updateBusinessProfile = mutation({
+  args: {
+    businessContact: v.optional(v.string()),
+    storefrontSlug: v.optional(v.string()),
+    logoStorageId: v.optional(v.string()),
+    bannerStorageId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireVerifiedUser(ctx);
+    if (user.sellerType !== "business")
+      throw new Error(
+        "Branded storefronts are a business feature. Upgrade from your seller dashboard.",
+      );
+
+    const patch: Partial<typeof user> = {};
+    if (args.businessContact !== undefined) {
+      const contact = args.businessContact.trim().slice(0, 200);
+      patch.businessContact = contact || undefined;
+    }
+    if (args.storefrontSlug !== undefined) {
+      const slug = args.storefrontSlug.trim().toLowerCase().slice(0, 60);
+      if (slug && !/^[a-z0-9](?:[a-z0-9-]{0,58}[a-z0-9])?$/.test(slug))
+        throw new Error(
+          "Storefront URL must be lowercase letters, numbers, and dashes.",
+        );
+      if (slug) {
+        const taken = await ctx.db
+          .query("users")
+          .withIndex("by_storefront_slug", (s) => s.eq("storefrontSlug", slug))
+          .first();
+        if (taken && taken._id !== user._id)
+          throw new Error("That storefront URL is already taken.");
+      }
+      patch.storefrontSlug = slug || undefined;
+    }
+    if (args.logoStorageId !== undefined)
+      patch.businessLogoStorageId = args.logoStorageId || undefined;
+    if (args.bannerStorageId !== undefined)
+      patch.businessBannerStorageId = args.bannerStorageId || undefined;
+
+    await ctx.db.patch(user._id, patch);
     return true;
   },
 });
@@ -57,7 +186,17 @@ export const updateProfile = mutation({
 export const publicProfile = query({
   args: { sellerId: v.string() },
   handler: async (ctx, args) => {
-    const sellerId = ctx.db.normalizeId("users", args.sellerId);
+    // Accept either a user id or a business storefront URL slug.
+    let sellerId = ctx.db.normalizeId("users", args.sellerId);
+    if (!sellerId) {
+      const bySlug = await ctx.db
+        .query("users")
+        .withIndex("by_storefront_slug", (s) =>
+          s.eq("storefrontSlug", args.sellerId.toLowerCase()),
+        )
+        .first();
+      sellerId = bySlug?._id ?? null;
+    }
     if (!sellerId) return null;
     const seller = await ctx.db.get(sellerId);
     if (!seller) return null;
@@ -94,6 +233,15 @@ export const publicProfile = query({
       totalListings: products.length,
       ratingCount,
       averageRating: ratingCount === 0 ? null : ratingSum / ratingCount,
+      sellerType: seller.sellerType ?? "individual",
+      businessContact: seller.businessContact ?? null,
+      businessLogoUrl: seller.businessLogoStorageId
+        ? await ctx.storage.getUrl(seller.businessLogoStorageId as never)
+        : null,
+      businessBannerUrl: seller.businessBannerStorageId
+        ? await ctx.storage.getUrl(seller.businessBannerStorageId as never)
+        : null,
+      storefrontSlug: seller.storefrontSlug ?? null,
     };
   },
 });

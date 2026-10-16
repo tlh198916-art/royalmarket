@@ -12,6 +12,7 @@ import {
   Clock3,
   Eye,
   HandCoins,
+  Handshake,
   PackageCheck,
   Rocket,
   ShieldCheck,
@@ -52,8 +53,16 @@ const steps = [
 
 const fees = [
   { label: "Listing fee", value: formatPrice(0), note: "Per item, forever free" },
-  { label: "Shop subscription", value: formatPrice(0), note: "No monthly charge" },
-  { label: "Commission on sales", value: formatPrice(0), note: "0% at launch" },
+  {
+    label: "Individual seller plan",
+    value: formatPrice(0),
+    note: "No monthly charge, 0% commission",
+  },
+  {
+    label: "Business plans",
+    value: "$29+",
+    note: "per month — Starter/Growth/Pro with 5%/3%/1% commission",
+  },
   { label: "Photo uploads", value: formatPrice(0), note: "Up to 8 photos per listing" },
 ];
 
@@ -64,7 +73,7 @@ const faqs = [
   },
   {
     q: "What does it cost to sell?",
-    a: "Nothing today: $0 to list, $0 to keep your shop open, and 0% commission on sales during launch. If online card payments are switched on later, standard payment-processing fees would be passed through at cost with advance notice — you'd still never pay a TLHmarketplacepro listing fee.",
+    a: "Individual sellers: nothing. $0 to list, $0 per month, 0% commission — free forever, no credit card required. Want a branded storefront and business tools? Business plans start at $29/month (5% commission), $79/month (3%), or $199/month (1%) — commission applies only to delivered sales of business sellers and never to shipping, cancellations, or refunds. If online card payments are switched on later, provider processing fees would be passed through at cost with advance notice.",
   },
   {
     q: "How do I receive payment?",
@@ -72,7 +81,7 @@ const faqs = [
   },
   {
     q: "Who pays for shipping?",
-    a: "There are no shipping fees on TLHmarketplacepro. You and the buyer arrange shipping or a meet-up yourselves — propose the terms from your orders page, and both of you approve the deal before handoff.",
+    a: "You decide. Enable local pickup (always free), seller-arranged shipping, or local delivery on each listing and set your own fees — or offer everything free. Buyers see your options and any fees before they order, and the fee is added once per order. The platform charges no shipping service fee because it provides no shipping service — you and the buyer approve every arrangement before handoff.",
   },
   {
     q: "Can buyers return an item?",
@@ -137,6 +146,111 @@ export default function SellLanding() {
               </Button>
             </div>
           </motion.div>
+        </div>
+      </section>
+
+      {/* How do you want to sell? — two seller paths */}
+      <section className="border-b border-border/70 bg-card/30 py-14 sm:py-16">
+        <div className="page-container">
+          <motion.div {...fadeUp} className="mx-auto max-w-2xl text-center">
+            <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+              How do you want to sell on TLHmarketplacepro?
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">
+              Everyone starts free. Upgrade only if you want a branded
+              storefront and business tools.
+            </p>
+          </motion.div>
+
+          <div className="mt-10 grid gap-5 lg:grid-cols-2">
+            {/* Individual — free */}
+            <motion.div
+              {...fadeUp}
+              className="flex flex-col rounded-3xl border border-primary/40 bg-card p-6 sm:p-8"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                  <Handshake className="size-6" />
+                </div>
+                <Badge className="bg-emerald-500/15 text-emerald-400">
+                  Free forever
+                </Badge>
+              </div>
+              <h3 className="mt-4 text-xl font-bold tracking-tight">
+                Individual Seller
+              </h3>
+              <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
+                Sell your products without owning a business or running your
+                own online store.
+              </p>
+              <ul className="mt-4 flex-1 space-y-2 text-sm">
+                {[
+                  "Free seller account — no credit card",
+                  "List products on the main marketplace",
+                  "Choose local pickup, shipping, or local delivery",
+                  "Set your own shipping and handling charges",
+                  "No monthly subscription, 0% commission",
+                  "No personal website required",
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-2">
+                    <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-400" />
+                    <span className="leading-5">{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <Button asChild size="lg" className="mt-6">
+                <Link to={ctaHref}>
+                  Start selling free <ArrowRight className="ml-2 size-4" />
+                </Link>
+              </Button>
+            </motion.div>
+
+            {/* Business — paid plans */}
+            <motion.div
+              {...fadeUp}
+              className="flex flex-col rounded-3xl border border-border/70 bg-card p-6 sm:p-8"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex size-12 items-center justify-center rounded-2xl bg-secondary text-secondary-foreground">
+                  <Rocket className="size-6" />
+                </div>
+                <Badge variant="outline">From $29/month</Badge>
+              </div>
+              <h3 className="mt-4 text-xl font-bold tracking-tight">
+                Business Seller
+              </h3>
+              <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
+                Run your own branded storefront and grow your business with
+                professional tools.
+              </p>
+              <ul className="mt-4 flex-1 space-y-2 text-sm">
+                {[
+                  "Professional business storefront with logo & banner",
+                  "Custom storefront URL and business contact info",
+                  "Advanced inventory, order, and analytics tools",
+                  "Promotional options (where available)",
+                  "Business Starter — $29/mo + 5% commission",
+                  "Business Growth — $79/mo + 3% commission",
+                  "Business Pro — $199/mo + 1% commission",
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-2">
+                    <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" />
+                    <span className="leading-5">{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <Button asChild size="lg" variant="outline" className="mt-6">
+                <Link to="/pricing">
+                  Explore business plans <ArrowRight className="ml-2 size-4" />
+                </Link>
+              </Button>
+            </motion.div>
+          </div>
+
+          <p className="mx-auto mt-6 max-w-2xl text-center text-xs leading-5 text-muted-foreground">
+            Upgrading from individual to business keeps every product, order,
+            review, and bit of account history. All prices in USD.
+          </p>
         </div>
       </section>
 

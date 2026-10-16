@@ -1,4 +1,9 @@
 import { EmptyState } from "@/components/marketplace/EmptyState";
+import {
+  FulfillmentEditor,
+  defaultFulfillment,
+  type FulfillmentSettings,
+} from "@/components/marketplace/FulfillmentEditor";
 import { Layout } from "@/components/marketplace/Layout";
 import { ProductMedia } from "@/components/marketplace/ProductMedia";
 import { Badge } from "@/components/ui/badge";
@@ -142,6 +147,21 @@ function ListingFormInner({ editId }: { editId: string | null }) {
       returnsAccepted: existing.returns?.accepted ?? false,
       returnDays: String(existing.returns?.days ?? 14),
     };
+  });
+  // Fulfillment options: prefilled from the listing being edited, else the
+  // seller's saved defaults, else pickup+shipping enabled.
+  const [fulfillment, setFulfillment] = useState<FulfillmentSettings>(() => {
+    if (existing?.fulfillment) {
+      return JSON.parse(
+        JSON.stringify(existing.fulfillment),
+      ) as FulfillmentSettings;
+    }
+    if (user?.defaultFulfillment) {
+      return JSON.parse(
+        JSON.stringify(user.defaultFulfillment),
+      ) as FulfillmentSettings;
+    }
+    return { ...defaultFulfillment };
   });
   const [photos, setPhotos] = useState<Photo[]>([]);
   const publish = existing ? existing.status === "active" : true;
@@ -308,6 +328,7 @@ function ListingFormInner({ editId }: { editId: string | null }) {
         accepted: form.returnsAccepted,
         days: form.returnsAccepted ? Number(form.returnDays) : 0,
       },
+      fulfillment,
     };
 
     setSubmitting(true);
@@ -662,14 +683,21 @@ function ListingFormInner({ editId }: { editId: string | null }) {
 
             {/* Fulfillment & returns */}
             <section className="rounded-2xl border border-border/70 bg-card p-6 space-y-5">
-              <h2 className="text-sm font-bold tracking-tight">
-                Fulfillment &amp; returns
-              </h2>
-              <div className="rounded-xl border border-border/70 bg-background/40 px-4 py-3 text-xs leading-5 text-muted-foreground">
-                No shipping fields here — buyers and sellers arrange shipping
-                or a meet-up directly, and both approve the deal before
-                handoff.
+              <div>
+                <h2 className="text-sm font-bold tracking-tight">
+                  Fulfillment &amp; returns
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Choose how buyers can receive this item. Enable more than
+                  one option if you like — buyers pick at checkout.
+                </p>
               </div>
+
+              <FulfillmentEditor
+                value={fulfillment}
+                onChange={setFulfillment}
+                idPrefix="listing-ff"
+              />
 
               <div className="flex items-center justify-between rounded-xl border border-border/70 bg-background/40 px-4 py-3">
                 <div>
@@ -751,8 +779,26 @@ function ListingFormInner({ editId }: { editId: string | null }) {
               <p className="mt-1.5 text-lg font-bold">
                 {formatPrice(priceCents)}
               </p>
-              <p className="text-xs text-muted-foreground">
-                Meet up or ship directly — agreed with the buyer
+              <p className="mt-1 text-xs text-muted-foreground">
+                {[
+                  fulfillment.pickup.enabled ? "Local pickup" : null,
+                  fulfillment.shipping.enabled
+                    ? `Shipping ${
+                        fulfillment.shipping.feeCents === 0
+                          ? "(free)"
+                          : `· ${formatPrice(fulfillment.shipping.feeCents)}`
+                      }`
+                    : null,
+                  fulfillment.delivery.enabled
+                    ? `Local delivery ${
+                        fulfillment.delivery.feeCents === 0
+                          ? "(free)"
+                          : `· ${formatPrice(fulfillment.delivery.feeCents)}`
+                      }`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "Enable a fulfillment option"}
               </p>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 <Badge variant="outline" className="capitalize">

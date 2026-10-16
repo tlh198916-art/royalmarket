@@ -40,10 +40,63 @@ export const orderStatusValidator = v.union(
 export type OrderStatus = Infer<typeof orderStatusValidator>;
 
 export const fulfillmentMethodValidator = v.union(
-  v.literal("meetup"),
-  v.literal("shipping"),
+  v.literal("meetup"), // local pickup / meet-up (legacy name kept for old orders)
+  v.literal("shipping"), // seller-arranged shipping
+  v.literal("delivery"), // seller-arranged local delivery
 );
 export type FulfillmentMethod = Infer<typeof fulfillmentMethodValidator>;
+
+export const sellerTypeValidator = v.union(
+  v.literal("individual"),
+  v.literal("business"),
+);
+export type SellerType = Infer<typeof sellerTypeValidator>;
+
+/** Per-product fulfillment options configured by the seller. */
+export const productFulfillmentValidator = v.object({
+  pickup: v.object({
+    enabled: v.boolean(),
+    area: v.optional(v.string()), // city / general pickup area (never a home address)
+    instructions: v.optional(v.string()),
+  }),
+  shipping: v.object({
+    enabled: v.boolean(),
+    feeCents: v.number(), // 0 = free shipping
+    handlingDays: v.number(),
+    carrier: v.optional(v.string()),
+    method: v.optional(v.string()),
+  }),
+  delivery: v.object({
+    enabled: v.boolean(),
+    feeCents: v.number(),
+    area: v.optional(v.string()),
+    estimatedDays: v.optional(v.number()),
+    contactRequired: v.boolean(),
+  }),
+});
+export type ProductFulfillment = Infer<typeof productFulfillmentValidator>;
+
+export const subscriptionStatusValidator = v.union(
+  v.literal("pending"), // agreed, awaiting payment confirmation
+  v.literal("active"),
+  v.literal("cancelled"),
+  v.literal("expired"),
+);
+export type SubscriptionStatus = Infer<typeof subscriptionStatusValidator>;
+
+export const planIdValidator = v.union(
+  v.literal("starter"),
+  v.literal("growth"),
+  v.literal("pro"),
+);
+export type PlanId = Infer<typeof planIdValidator>;
+
+/** What the platform charges commission on. Admin-configurable. */
+export const commissionBaseValidator = v.union(
+  v.literal("merchandise_subtotal"),
+  v.literal("merchandise_plus_shipping"),
+);
+export type CommissionBase = Infer<typeof commissionBaseValidator>;
 
 export const analyticsEventTypeValidator = v.union(
   v.literal("product_view"),
@@ -77,9 +130,20 @@ const schema = defineSchema(
       sellerBio: v.optional(v.string()),
       location: v.optional(v.string()),
       marketingOptIn: v.optional(v.boolean()),
+
+      // Two-tier seller system: individual (free) vs business (paid plan).
+      sellerType: v.optional(sellerTypeValidator),
+      // Business storefront branding (Business plans only).
+      businessContact: v.optional(v.string()),
+      businessLogoStorageId: v.optional(v.string()),
+      businessBannerStorageId: v.optional(v.string()),
+      storefrontSlug: v.optional(v.string()),
+      // Seller-level fulfillment defaults, prefilled into new listings.
+      defaultFulfillment: v.optional(productFulfillmentValidator),
     })
       .index("email", ["email"])
-      .index("by_role", ["role"]),
+      .index("by_role", ["role"])
+      .index("by_storefront_slug", ["storefrontSlug"]),
 
     products: defineTable({
       sellerId: v.id("users"),
@@ -100,6 +164,10 @@ const schema = defineSchema(
       moderatorNote: v.optional(v.string()),
       // AI semantic-search embedding (768-dim Gemini); optional until indexed.
       embedding: v.optional(v.array(v.float64())),
+      // Seller-configured fulfillment: pickup, seller shipping, local delivery.
+      // Optional: listings created before this feature behave as before
+      // (pickup or shipping negotiated directly, no preset fees).
+      fulfillment: v.optional(productFulfillmentValidator),
     })
       .index("by_status", ["status"])
       .index("by_seller", ["sellerId"])
@@ -161,9 +229,17 @@ const schema = defineSchema(
             note: v.optional(v.string()),
             buyerAgreed: v.boolean(),
             sellerAgreed: v.boolean(),
+            // Seller-set charge for this arrangement, snapshotted at checkout
+            // (0 for pickup / free options). Recomputed if the method changes.
+            feeCents: v.optional(v.number()),
+            trackingNumber: v.optional(v.string()),
           }),
         ),
       ),
+      // Sum of per-seller fulfillment fees. Kept separate from subtotal so
+      // seller-set charges are never double-counted or confused with
+      // platform fees (there are none on fulfillment).
+      shippingFeeCents: v.optional(v.number()),
       placedAt: v.optional(v.number()),
       deliveredAt: v.optional(v.number()),
     }).index("by_buyer", ["buyerId"]),
@@ -182,6 +258,74 @@ const schema = defineSchema(
       .index("by_buyer", ["buyerId"])
       .index("by_order", ["orderId"])
       .index("by_product", ["productId"]),
+
+    /**
+     * Platform subscription plans + commission settings (singleton doc with
+     * _id "platform"). Admin-editable; all USD. Never trust client-sent
+     * prices — subscription and commission code reads plans from here.
+     */
+    platformSettings: defineTable({
+      plans: v.array(
+        v.object({
+          id: planIdValidator,
+          name: v.string(),
+          priceCentsMonthly: v.number(),
+          commissionBps: v.number(), // basis points, e.g. 500 = 5%
+          active: v.boolean(),
+          features: v.array(v.string()),
+        }),
+      ),
+      commissionBase: commissionBaseValidator,
+      updatedAt: v.number(),
+      updatedBy: v.id("users"),
+    }),
+
+    /**
+     * Business seller subscriptions. Prices and commission rates are
+     * snapshotted from platformSettings at agreement time so later admin
+     * price changes never rewrite terms a seller already accepted.
+     */
+    subscriptions: defineTable({
+      userId: v.id("users"),
+      planId: planIdValidator,
+      planName: v.string(),
+      priceCentsMonthly: v.number(),
+      commissionBps: v.number(),
+      status: subscriptionStatusValidator,
+      agreedAt: v.number(),
+      startedAt: v.optional(v.number()),
+      renewsAt: v.optional(v.number()),
+      cancelledAt: v.optional(v.number()),
+      activatedBy: v.optional(v.id("users")), // admin who confirmed payment
+      paymentNote: v.optional(v.string()),
+    })
+      .index("by_user", ["userId"])
+      .index("by_status", ["status"]),
+
+    /**
+     * Commission ledger: one row per delivered order item for business
+     * sellers. The by_orderItem index makes accrual idempotent — retried
+     * webhooks or repeated status updates can never double-charge.
+     */
+    commissionLedger: defineTable({
+      sellerId: v.id("users"),
+      orderId: v.id("orders"),
+      orderItemId: v.id("orderItems"),
+      planId: v.string(),
+      baseCents: v.number(), // eligible transaction amount
+      commissionBps: v.number(),
+      amountCents: v.number(),
+      status: v.union(
+        v.literal("pending"), // accrued at delivery, awaiting settlement
+        v.literal("confirmed"), // admin marked paid
+        v.literal("reversed"), // refund / cancellation reversal
+      ),
+      occurredAt: v.number(),
+      note: v.optional(v.string()),
+    })
+      .index("by_seller", ["sellerId"])
+      .index("by_orderItem", ["orderItemId"])
+      .index("by_status", ["status"]),
 
     tickets: defineTable({
       name: v.string(),

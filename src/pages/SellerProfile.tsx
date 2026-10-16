@@ -56,20 +56,41 @@ export default function SellerProfile() {
           transition={{ duration: 0.4 }}
           className="relative overflow-hidden rounded-3xl border border-border/70 bg-card"
         >
-          <div
-            className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-r from-primary/25 via-primary/10 to-transparent"
-            aria-hidden
-          />
+          {profile.businessBannerUrl ? (
+            <img
+              src={profile.businessBannerUrl}
+              alt=""
+              className="h-24 w-full object-cover sm:h-32"
+            />
+          ) : (
+            <div
+              className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-r from-primary/25 via-primary/10 to-transparent"
+              aria-hidden
+            />
+          )}
           <div className="relative flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:p-8">
-            <span className="flex size-20 shrink-0 items-center justify-center rounded-3xl border border-border/70 bg-secondary text-2xl font-extrabold">
-              {initials(shopName)}
-            </span>
+            {profile.businessLogoUrl ? (
+              <img
+                src={profile.businessLogoUrl}
+                alt={`${shopName} logo`}
+                className="size-20 shrink-0 rounded-3xl border border-border/70 object-cover"
+              />
+            ) : (
+              <span className="flex size-20 shrink-0 items-center justify-center rounded-3xl border border-border/70 bg-secondary text-2xl font-extrabold">
+                {initials(shopName)}
+              </span>
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-bold tracking-tight">{shopName}</h1>
                 <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
                   Verified account
                 </span>
+                {profile.sellerType === "business" && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-[11px] font-semibold">
+                    Business storefront
+                  </span>
+                )}
               </div>
               {profile.bio && (
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
@@ -88,6 +109,11 @@ export default function SellerProfile() {
                 </span>
                 {profile.averageRating !== null && (
                   <StarRating value={profile.averageRating} />
+                )}
+                {profile.businessContact && (
+                  <span className="inline-flex items-center gap-1.5">
+                    {profile.businessContact}
+                  </span>
                 )}
               </div>
             </div>

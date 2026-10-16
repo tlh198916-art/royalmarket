@@ -2,7 +2,30 @@ import { v } from "convex/values";
 import type { OrderStatus } from "./schema";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireUser, requireVerifiedUser } from "./lib";
+import { accrueCommission, reverseCommission } from "./commissions";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+
+const methodArg = v.union(
+  v.literal("meetup"),
+  v.literal("shipping"),
+  v.literal("delivery"),
+);
+
+/**
+ * The fee a seller has configured for one fulfillment method on a product.
+ * Pickup is always free; shipping/delivery fees are seller-set.
+ */
+function feeForMethod(
+  product: Doc<"products">,
+  method: "meetup" | "shipping" | "delivery",
+): number {
+  const f = product.fulfillment;
+  if (!f) return 0; // legacy listings: negotiated directly, no preset fee
+  if (method === "meetup") return f.pickup.enabled ? 0 : -1;
+  if (method === "shipping")
+    return f.shipping.enabled ? Math.round(f.shipping.feeCents) : -1;
+  return f.delivery.enabled ? Math.round(f.delivery.feeCents) : -1;
+}
 
 /** Derive the order status from its line items. */
 async function recomputeOrderStatus(
@@ -46,8 +69,15 @@ export const place = mutation({
         quantity: v.number(),
       }),
     ),
-    method: v.union(v.literal("meetup"), v.literal("shipping")),
-    note: v.optional(v.string()),
+    // Per-seller arrangement: each seller's items ship/pick up/deliver as a
+    // group with one seller-set fee (never charged twice).
+    fulfillments: v.array(
+      v.object({
+        sellerId: v.id("users"),
+        method: methodArg,
+        note: v.optional(v.string()),
+      }),
+    ),
     paymentMethod: v.union(v.literal("cod"), v.literal("card")),
   },
   handler: async (ctx, args) => {
@@ -106,11 +136,70 @@ export const place = mutation({
         quantity: line.quantity,
       });
     }
-    // No platform shipping fees — buyers and sellers agree on shipping or a
-    // meet-up directly, and both approve the arrangement before handoff.
-    const totalCents = subtotalCents;
-    const fulfillmentNote = args.note?.trim().slice(0, 500) || undefined;
+
+    // Per-seller fulfillment: validate the chosen method against each
+    // product's settings and charge that seller's fee once per order group
+    // (the max fee among the buyer's lines from that seller — never per item).
     const sellerIds = [...new Set(lines.map((l) => l.product.sellerId))];
+    if (args.fulfillments.length !== sellerIds.length)
+      throw new Error(
+        "Choose a fulfillment option for every seller in your cart.",
+      );
+    let shippingFeeCents = 0;
+    const fulfillmentEntries: {
+      sellerId: Id<"users">;
+      method: "meetup" | "shipping" | "delivery";
+      note?: string;
+      buyerAgreed: boolean;
+      sellerAgreed: boolean;
+      feeCents: number;
+    }[] = [];
+
+    for (const choice of args.fulfillments) {
+      if (!sellerIds.includes(choice.sellerId))
+        throw new Error("That seller is not part of this order.");
+      if (
+        args.fulfillments.filter((f) => f.sellerId === choice.sellerId).length >
+        1
+      )
+        throw new Error("Choose one fulfillment option per seller.");
+      const sellerLines = lines.filter(
+        (l) => l.product.sellerId === choice.sellerId,
+      );
+      let groupFee = 0;
+      for (const line of sellerLines) {
+        const fee = feeForMethod(line.product, choice.method);
+        if (fee < 0) {
+          const seller = await ctx.db.get(choice.sellerId);
+          throw new Error(
+            `${seller?.shopName ?? "This seller"} doesn't offer ${
+              choice.method === "meetup"
+                ? "local pickup"
+                : choice.method === "shipping"
+                  ? "shipping"
+                  : "local delivery"
+            } for "${line.product.title}".`,
+          );
+        }
+        groupFee = Math.max(groupFee, fee);
+      }
+      shippingFeeCents += groupFee;
+      fulfillmentEntries.push({
+        sellerId: choice.sellerId,
+        method: choice.method,
+        note: choice.note?.trim().slice(0, 500) || undefined,
+        // The buyer's checkout choice counts as their approval of the deal;
+        // each seller still has to approve (or propose a change) their side.
+        buyerAgreed: true,
+        sellerAgreed: false,
+        feeCents: groupFee,
+      });
+    }
+
+    // Seller-set fees are the only addition to the merchandise subtotal —
+    // charged exactly once per seller group. No platform shipping fee exists.
+    const totalCents = subtotalCents + shippingFeeCents;
+    const now = Date.now();
 
     // Decrement stock only after all checks pass.
     for (const line of lines) {
@@ -120,7 +209,6 @@ export const place = mutation({
       });
     }
 
-    const now = Date.now();
     const orderId = await ctx.db.insert("orders", {
       buyerId: buyer._id,
       items,
@@ -128,15 +216,8 @@ export const place = mutation({
       totalCents,
       status: "placed",
       paymentMethod: "cod",
-      // The buyer's checkout choice counts as their approval of the deal;
-      // each seller still has to approve (or propose a change) their side.
-      fulfillments: sellerIds.map((sellerId) => ({
-        sellerId,
-        method: args.method,
-        note: fulfillmentNote,
-        buyerAgreed: true,
-        sellerAgreed: false,
-      })),
+      fulfillments: fulfillmentEntries,
+      shippingFeeCents,
       placedAt: now,
     });
 
@@ -267,8 +348,7 @@ export const updateItemStatus = mutation({
     if (item.sellerId !== user._id && user.role !== "admin")
       throw new Error("You can only update orders for your own listings.");
 
-    // Both parties must approve the fulfillment deal (shipping or meet-up)
-    // before the seller can dispatch.
+    // Both parties must approve the fulfillment deal before dispatch.
     if (item.status === "placed" && args.status === "shipped") {
       const order = await ctx.db.get(item.orderId);
       const entry = order?.fulfillments?.find(
@@ -276,7 +356,7 @@ export const updateItemStatus = mutation({
       );
       if (!entry || !entry.buyerAgreed || !entry.sellerAgreed) {
         throw new Error(
-          "Both buyer and seller must approve the fulfillment arrangement (shipping or meet-up) before dispatch.",
+          "Both buyer and seller must approve the fulfillment arrangement before dispatch.",
         );
       }
     }
@@ -305,6 +385,27 @@ export const updateItemStatus = mutation({
       }
     }
 
+    // Accrue platform commission for business sellers once an item is
+    // delivered (payment happens on delivery). Idempotent per order item.
+    if (args.status === "delivered") {
+      const order = await ctx.db.get(item.orderId);
+      const fee = order?.fulfillments?.find(
+        (f) => f.sellerId === item.sellerId,
+      )?.feeCents;
+      await accrueCommission(ctx, {
+        orderId: item.orderId,
+        orderItemId: item._id,
+        sellerId: item.sellerId,
+        merchandiseCents: item.priceCents * item.quantity,
+        shippingCents: fee ?? 0,
+      });
+    }
+    // Refund/cancellation safety: a pending commission never survives a
+    // cancelled item.
+    if (args.status === "cancelled") {
+      await reverseCommission(ctx, item._id, "Order item cancelled.");
+    }
+
     return await recomputeOrderStatus(ctx, item.orderId);
   },
 });
@@ -329,6 +430,8 @@ export const cancel = mutation({
     for (const item of items) {
       if (item.status !== "placed") continue;
       await ctx.db.patch(item._id, { status: "cancelled" });
+      // Commission safety net — a cancelled item never keeps a pending row.
+      await reverseCommission(ctx, item._id, "Order cancelled by buyer.");
       const product = await ctx.db.get(item.productId);
       if (product) {
         await ctx.db.patch(item.productId, {
@@ -338,7 +441,12 @@ export const cancel = mutation({
       }
     }
 
-    await ctx.db.patch(args.orderId, { status: "cancelled" });
+    // Cancelled orders owe no fulfillment fees.
+    await ctx.db.patch(args.orderId, {
+      status: "cancelled",
+      shippingFeeCents: 0,
+      totalCents: order.subtotalCents,
+    });
     return true;
   },
 });
@@ -352,7 +460,7 @@ export const setFulfillment = mutation({
   args: {
     orderId: v.id("orders"),
     sellerId: v.id("users"),
-    method: v.union(v.literal("meetup"), v.literal("shipping")),
+    method: methodArg,
     note: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -371,23 +479,85 @@ export const setFulfillment = mutation({
       .query("orderItems")
       .withIndex("by_order", (s) => s.eq("orderId", args.orderId))
       .collect();
-    if (!orderItems.some((i) => i.sellerId === args.sellerId))
+    const sellerItems = orderItems.filter(
+      (i) => i.sellerId === args.sellerId,
+    );
+    if (sellerItems.length === 0)
       throw new Error("That seller is not part of this order.");
+
+    // Recompute this seller's fee from their current product settings so a
+    // method change can't strand a stale charge (or add a new one silently).
+    let feeCents = 0;
+    for (const item of sellerItems) {
+      const product = await ctx.db.get(item.productId);
+      if (!product) continue;
+      const fee = feeForMethod(product, args.method);
+      if (fee < 0)
+        throw new Error(
+          `This seller no longer offers that fulfillment option for "${product.title}".`,
+        );
+      feeCents = Math.max(feeCents, fee);
+    }
 
     const note = args.note?.trim().slice(0, 500) || undefined;
     const fulfillments = [...(order.fulfillments ?? [])];
+    const index = fulfillments.findIndex((f) => f.sellerId === args.sellerId);
+    const prior = index === -1 ? undefined : fulfillments[index];
     const entry = {
       sellerId: args.sellerId,
       method: args.method,
       note,
-      // The editor's own approval stands; the other party re-approves.
+      // The editor's own approval stands; the other party re-approves —
+      // important when the fee changes with the method.
       buyerAgreed: isBuyer,
       sellerAgreed: isSeller,
+      feeCents,
+      trackingNumber: prior?.trackingNumber,
     };
-    const index = fulfillments.findIndex((f) => f.sellerId === args.sellerId);
     if (index === -1) fulfillments.push(entry);
     else fulfillments[index] = entry;
-    await ctx.db.patch(args.orderId, { fulfillments });
+
+    // Keep the order total in sync with the recomputed fees — one fee per
+    // seller group, never duplicated.
+    const shippingFeeCents = fulfillments.reduce(
+      (sum, f) => sum + (f.feeCents ?? 0),
+      0,
+    );
+    await ctx.db.patch(args.orderId, {
+      fulfillments,
+      shippingFeeCents,
+      totalCents: order.subtotalCents + shippingFeeCents,
+    });
+    return true;
+  },
+});
+
+/** Seller adds or updates a tracking number for their side of an order. */
+export const setTracking = mutation({
+  args: {
+    orderId: v.id("orders"),
+    trackingNumber: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireVerifiedUser(ctx);
+    const order = await ctx.db.get(args.orderId);
+    if (!order) throw new Error("Order not found.");
+    const fulfillments = order.fulfillments ?? [];
+    const index = fulfillments.findIndex((f) => f.sellerId === user._id);
+    if (index === -1)
+      throw new Error("No fulfillment arrangement on this order yet.");
+    if (fulfillments[index].method !== "shipping")
+      throw new Error("Tracking numbers apply to shipped orders only.");
+    if (order.status === "cancelled")
+      throw new Error("This order is cancelled.");
+
+    const trackingNumber = args.trackingNumber.trim().slice(0, 80);
+    const next = [...fulfillments];
+    next[index] = {
+      ...next[index],
+      trackingNumber: trackingNumber || undefined,
+    };
+    await ctx.db.patch(args.orderId, { fulfillments: next });
     return true;
   },
 });

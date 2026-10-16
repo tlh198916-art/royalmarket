@@ -56,9 +56,9 @@ export default function Orders() {
   const approveDeal = useMutation(api.orders.approveFulfillment);
   const proposeDeal = useMutation(api.orders.setFulfillment);
   const [editKey, setEditKey] = useState<string | null>(null);
-  const [editMethod, setEditMethod] = useState<"meetup" | "shipping">(
-    "meetup",
-  );
+  const [editMethod, setEditMethod] = useState<
+    "meetup" | "shipping" | "delivery"
+  >("meetup");
   const [editNote, setEditNote] = useState("");
   const [savingDeal, setSavingDeal] = useState(false);
 
@@ -161,6 +161,9 @@ export default function Orders() {
                           {order.paymentMethod === "cod"
                             ? "Pay on delivery"
                             : "Card"}
+                          {(order.shippingFeeCents ?? 0) > 0
+                            ? ` · items ${formatPrice(order.subtotalCents)} + seller fees ${formatPrice(order.shippingFeeCents ?? 0)}`
+                            : ""}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -285,12 +288,17 @@ export default function Orders() {
                               <p className="flex items-center gap-1.5 text-sm font-semibold">
                                 <Handshake className="size-4 text-primary" />
                                 {entry.method === "meetup"
-                                  ? "Meet up"
-                                  : "Shipping — arranged directly"}
+                                  ? "Local pickup"
+                                  : entry.method === "delivery"
+                                    ? "Local delivery"
+                                    : "Shipping"}
                                 <span className="font-normal text-muted-foreground">
                                   ·{" "}
                                   {order.sellerNames?.[entry.sellerId] ??
                                     "Seller"}
+                                  {(entry.feeCents ?? 0) > 0
+                                    ? ` · ${formatPrice(entry.feeCents ?? 0)} (seller-set fee)`
+                                    : " · Free"}
                                 </span>
                               </p>
                               {bothAgreed ? (
@@ -312,6 +320,11 @@ export default function Orders() {
                             {entry.note && (
                               <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
                                 {entry.note}
+                              </p>
+                            )}
+                            {entry.trackingNumber && (
+                              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                                Tracking: {entry.trackingNumber}
                               </p>
                             )}
                             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
@@ -374,7 +387,7 @@ export default function Orders() {
                             )}
                             {editKey === dealKey && order.status === "placed" && (
                               <div className="mt-3 space-y-2.5 rounded-xl border border-border/70 bg-card p-3">
-                                <div className="flex gap-2">
+                                <div className="flex flex-wrap gap-2">
                                   <Button
                                     size="sm"
                                     variant={
@@ -384,7 +397,7 @@ export default function Orders() {
                                     }
                                     onClick={() => setEditMethod("meetup")}
                                   >
-                                    Meet up
+                                    Local pickup
                                   </Button>
                                   <Button
                                     size="sm"
@@ -396,6 +409,17 @@ export default function Orders() {
                                     onClick={() => setEditMethod("shipping")}
                                   >
                                     Shipping
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant={
+                                      editMethod === "delivery"
+                                        ? "default"
+                                        : "outline"
+                                    }
+                                    onClick={() => setEditMethod("delivery")}
+                                  >
+                                    Local delivery
                                   </Button>
                                 </div>
                                 <Textarea
