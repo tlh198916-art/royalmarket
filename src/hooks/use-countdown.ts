@@ -46,17 +46,24 @@ export function eventPhase(
 }
 
 /**
- * Re-renders once per second with a fresh countdown to `targetMs`. Also
- * exposes `nowMs` so callers can derive phases without calling Date.now()
- * during render (impure under the react-hooks lint rules).
+ * Re-renders once per second with a fresh countdown to `targetMs`, and stops
+ * ticking at `tickUntilMs` (defaults to the target) so an ended event never
+ * causes endless re-renders. `nowMs` lets callers derive phases without
+ * calling Date.now() during render (impure under the react-hooks lint rules).
  */
 export function useCountdown(
   targetMs: number,
+  tickUntilMs = targetMs,
 ): Countdown & { nowMs: number } {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    if (Date.now() >= tickUntilMs) return; // already over — nothing to tick to
+    const id = window.setInterval(() => {
+      const next = Date.now();
+      setNow(next);
+      if (next >= tickUntilMs) window.clearInterval(id); // stop once over
+    }, 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [targetMs, tickUntilMs]);
   return { ...countdownTo(now, targetMs), nowMs: now };
 }

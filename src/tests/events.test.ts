@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { FOUNDING_EVENT } from "@/convex/eventDefaults";
+import { eventSlug, FOUNDING_EVENT } from "@/convex/eventDefaults";
 import { countdownTo, eventPhase } from "@/hooks/use-countdown";
+import { errorMessage, parseDatetimeLocal, toDatetimeLocal } from "@/lib/format";
 import { buildShareLinks } from "@/lib/socialShare";
 
 describe("countdownTo", () => {
@@ -78,5 +79,52 @@ describe("FOUNDING_EVENT defaults", () => {
       expect(item.trim().length).toBeGreaterThan(0);
     }
     expect(FOUNDING_EVENT.joinInstructions.length).toBeGreaterThan(10);
+  });
+});
+
+describe("eventSlug", () => {
+  test("slugifies titles", () => {
+    expect(eventSlug("Founding Sellers Launch Event")).toBe(
+      "founding-sellers-launch-event",
+    );
+    expect(eventSlug("  Spring-- Sale!  ")).toBe("spring-sale");
+    expect(eventSlug("Summer PART 2026")).toBe("summer-part-2026");
+  });
+
+  test("falls back to 'event' without usable characters", () => {
+    expect(eventSlug("!!!")).toBe("event");
+    expect(eventSlug("")).toBe("event");
+  });
+
+  test("caps slugs at 60 characters", () => {
+    expect(eventSlug("a".repeat(100))).toHaveLength(60);
+  });
+});
+
+describe("datetime-local helpers", () => {
+  test("round-trips epoch ms through a local datetime value", () => {
+    const ms = Date.UTC(2026, 10, 12, 17, 0);
+    const value = toDatetimeLocal(ms);
+    expect(value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    expect(parseDatetimeLocal(value)).toBe(ms);
+  });
+
+  test("rejects empty or invalid values instead of defaulting to now", () => {
+    expect(parseDatetimeLocal("")).toBeNull();
+    expect(parseDatetimeLocal("not-a-date")).toBeNull();
+  });
+});
+
+describe("errorMessage", () => {
+  test("unwraps thrown errors", () => {
+    expect(errorMessage(new Error("boom"))).toBe("boom");
+    expect(errorMessage(new Error("Error: wrapped"))).toBe("wrapped");
+  });
+
+  test("falls back for non-errors", () => {
+    expect(errorMessage("nope")).toBe(
+      "Something went wrong — please try again.",
+    );
+    expect(errorMessage(undefined, "custom fallback")).toBe("custom fallback");
   });
 });

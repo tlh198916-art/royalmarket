@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import { useAuth } from "@/hooks/use-auth";
 import { eventPhase, useCountdown } from "@/hooks/use-countdown";
-import { pluralize } from "@/lib/format";
+import { errorMessage, pluralize } from "@/lib/format";
 import { buildShareLinks } from "@/lib/socialShare";
 import { useMutation, useQuery } from "convex/react";
 import { motion } from "framer-motion";
@@ -56,7 +56,7 @@ function formatEventDate(startsAt: number, endsAt: number) {
 
 /** Live-updating countdown tiles for an upcoming event. */
 function CountdownTiles({ startsAt, endsAt }: { startsAt: number; endsAt: number }) {
-  const countdown = useCountdown(startsAt);
+  const countdown = useCountdown(startsAt, endsAt);
   const phase = eventPhase(startsAt, endsAt, countdown.nowMs);
 
   if (phase === "live") {
@@ -164,19 +164,33 @@ function RegisterButton({
   slug,
   registered,
   disabled,
+  startsAt,
+  endsAt,
 }: {
   slug: string;
   registered: boolean;
   disabled?: boolean;
+  startsAt: number;
+  endsAt: number;
 }) {
   const { isAuthenticated, isLoading } = useAuth();
   const register = useMutation(api.marketEvents.register);
   const [pending, setPending] = useState(false);
+  const { nowMs } = useCountdown(startsAt, endsAt);
+  const ended = eventPhase(startsAt, endsAt, nowMs) === "ended";
+  const blocked = disabled === true || ended;
 
   if (isLoading) {
     return (
       <Button size="lg" disabled className="min-w-52">
         <Loader2 className="mr-2 size-4 animate-spin" /> Loading…
+      </Button>
+    );
+  }
+  if (blocked && !registered) {
+    return (
+      <Button size="lg" disabled className="min-w-52">
+        {ended ? "Registration closed" : "Registration unavailable"}
       </Button>
     );
   }
@@ -207,7 +221,7 @@ function RegisterButton({
     <Button
       size="lg"
       className="min-w-52"
-      disabled={disabled || pending}
+      disabled={blocked || pending}
       onClick={async () => {
         setPending(true);
         try {
@@ -219,9 +233,7 @@ function RegisterButton({
           );
         } catch (error) {
           toast.error(
-            error instanceof Error
-              ? error.message.replace(/^Error: /, "")
-              : "Couldn't register — please try again.",
+            errorMessage(error, "Couldn't register — please try again."),
           );
         } finally {
           setPending(false);
@@ -332,6 +344,8 @@ export default function Events() {
                     slug={featured.slug}
                     registered={featured.registered}
                     disabled={cancelled}
+                    startsAt={featured.startsAt}
+                    endsAt={featured.endsAt}
                   />
                   <Button asChild size="lg" variant="outline">
                     <Link to={sellerHref}>
@@ -413,10 +427,21 @@ export default function Events() {
                     type="button"
                     onClick={async () => {
                       try {
-                        await unregister({ slug: featured.slug });
-                        toast.success("Registration cancelled.");
-                      } catch {
-                        toast.error("Couldn't cancel — please try again.");
+                        const removed = await unregister({
+                          slug: featured.slug,
+                        });
+                        if (removed) toast.success("Registration cancelled.");
+                        else
+                          toast.message(
+                            "You weren't registered for this event.",
+                          );
+                      } catch (error) {
+                        toast.error(
+                          errorMessage(
+                            error,
+                            "Couldn't cancel — please try again.",
+                          ),
+                        );
                       }
                     }}
                     className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
@@ -562,6 +587,8 @@ export default function Events() {
                         slug={event.slug}
                         registered={event.registered}
                         disabled={event.status === "cancelled"}
+                        startsAt={event.startsAt}
+                        endsAt={event.endsAt}
                       />
                     </div>
                   </div>
@@ -588,6 +615,8 @@ export default function Events() {
                 slug={featured.slug}
                 registered={featured.registered}
                 disabled={featured.status === "cancelled"}
+                startsAt={featured.startsAt}
+                endsAt={featured.endsAt}
               />
             ) : (
               <Button asChild size="lg">

@@ -58,3 +58,26 @@ export function initials(name: string | null | undefined): string {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
+
+/** Epoch ms → value for <input type="datetime-local"> in local time. */
+export function toDatetimeLocal(ms: number): string {
+  const shifted = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000);
+  return shifted.toISOString().slice(0, 16);
+}
+
+/** Parse a datetime-local value to epoch ms (null when empty/invalid). */
+export function parseDatetimeLocal(value: string): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Normalize a caught error into a displayable message. */
+export function errorMessage(
+  error: unknown,
+  fallback = "Something went wrong — please try again.",
+): string {
+  return error instanceof Error
+    ? error.message.replace(/^Error: /, "")
+    : fallback;
+}

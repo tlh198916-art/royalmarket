@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/convex/_generated/api";
+import { bpsToPercent } from "@/convex/plans";
 import type { PlanId } from "@/convex/schema";
 import { formatDate, formatPrice } from "@/lib/format";
 import type { Doc } from "@/convex/_generated/dataModel";
@@ -65,6 +66,7 @@ function PlatformSettingsForm({
       id: plan.id,
       name: plan.name,
       priceDollars: (plan.priceCentsMonthly / 100).toFixed(2),
+      // Plain number for the input ("5", not "5%") — display uses bpsToPercent.
       commissionPercent: (plan.commissionBps / 100).toString(),
       active: plan.active,
       features: [...plan.features],
@@ -299,8 +301,7 @@ function PlatformSettingsForm({
                     </span>
                   </p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    {sub.planName} · {formatPrice(sub.priceCentsMonthly)}/mo ·{" "}
-                    {(sub.commissionBps / 100).toLocaleString()}% · agreed{" "}
+                    {sub.planName} · {formatPrice(sub.priceCentsMonthly)}/mo ·{" "}                      {bpsToPercent(sub.commissionBps)} · agreed{" "}
                     {formatDate(sub.agreedAt)}
                     {sub.renewsAt ? ` · renews ${formatDate(sub.renewsAt)}` : ""}
                   </p>
@@ -398,7 +399,7 @@ function PlatformSettingsForm({
                     {row.sellerName} · {formatPrice(row.amountCents)}{" "}
                     <span className="text-xs text-muted-foreground">
                       (base {formatPrice(row.baseCents)} at{" "}
-                      {(row.commissionBps / 100).toLocaleString()}%)
+                      {bpsToPercent(row.commissionBps)})
                     </span>
                   </p>
                   <p className="mt-0.5 text-xs text-muted-foreground">

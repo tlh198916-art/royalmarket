@@ -7,6 +7,21 @@
  * persists a row lazily), so the feature works with zero setup.
  */
 
+/**
+ * URL-safe slug for an event title, e.g.
+ * "Founding Sellers Launch Event" → "founding-sellers-launch-event".
+ * Falls back to "event" when the title has no usable characters.
+ * Pure — unit-tested in src/tests/events.test.ts.
+ */
+export function eventSlug(title: string): string {
+  const base = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return base || "event";
+}
+
 export const FOUNDING_EVENT = {
   slug: "founding-sellers-launch",
   title: "Founding Sellers Launch Event",

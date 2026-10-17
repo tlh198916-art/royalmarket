@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
+import { bpsToPercent } from "@/convex/plans";
 import { useAuth } from "@/hooks/use-auth";
 import { formatDate, formatPrice, initials } from "@/lib/format";
 import { useMutation, useQuery } from "convex/react";
@@ -970,11 +971,7 @@ export default function SellerDashboard() {
                         Commission rate
                       </span>
                       <span className="font-medium">
-                        {(mySub.commissionBps / 100).toLocaleString(
-                          undefined,
-                          { maximumFractionDigits: 2 },
-                        )}
-                        % per delivered sale
+                        {bpsToPercent(mySub.commissionBps)} per delivered sale
                       </span>
                     </div>
                     {mySub.renewsAt && (
@@ -1092,7 +1089,7 @@ export default function SellerDashboard() {
                         <span className="text-muted-foreground">
                           {formatDate(row.occurredAt)} · base{" "}
                           {formatPrice(row.baseCents)} at{' '}
-                          {(row.commissionBps / 100).toLocaleString()}%
+                          {bpsToPercent(row.commissionBps)}
                         </span>
                         <span className="flex items-center gap-2">
                           <span className="font-bold">

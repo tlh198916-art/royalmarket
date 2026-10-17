@@ -1,6 +1,6 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { FOUNDING_EVENT } from "./eventDefaults";
+import { eventSlug, FOUNDING_EVENT } from "./eventDefaults";
 import { requireAdmin, requireVerifiedUser } from "./lib";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -88,17 +88,8 @@ function validateEventInput(args: {
   };
 }
 
-function slugify(title: string): string {
-  const base = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-  return base || "event";
-}
-
 async function uniqueSlug(ctx: MutationCtx, title: string): Promise<string> {
-  const base = slugify(title);
+  const base = eventSlug(title);
   let candidate = base;
   for (let i = 2; i < 50; i++) {
     const existing = await ctx.db
@@ -136,10 +127,12 @@ async function registeredCount(
   ctx: QueryCtx,
   eventId: Id<"marketEvents">,
 ): Promise<number> {
+  // collect() rather than a capped take() so counts never silently truncate
+  // (fine at launch scale; revisit with pagination past ~10k rows/event).
   const rows = await ctx.db
     .query("eventRegistrations")
     .withIndex("by_event", (s) => s.eq("eventId", eventId))
-    .take(500);
+    .collect();
   return rows.filter((r) => r.status === "registered").length;
 }
 
@@ -216,13 +209,28 @@ export const list = query({
       .query("marketEvents")
       .filter((q) => q.neq(q.field("status"), "draft"))
       .take(50);
-    const sorted = [...rows].sort((a, b) => a.startsAt - b.startsAt);
+    // Hero-first ordering: upcoming/live published events, then ended
+    // published, then cancelled — so a cancelled or long-past event can never
+    // outrank the next real event as the page's featured card.
+    const now = Date.now();
+    const rank = (row: EventDoc) => {
+      if (row.status !== "published") return 2; // cancelled
+      const endsAt = row.startsAt + row.durationMinutes * 60_000;
+      return endsAt > now ? 0 : 1; // upcoming/live vs ended
+    };
+    const sorted = [...rows].sort(
+      (a, b) => rank(a) - rank(b) || a.startsAt - b.startsAt,
+    );
     const events = await Promise.all(
       sorted.map((row) =>
         publicShape(ctx, { ...row, id: row._id }, userId),
       ),
     );
-    if (!rows.some((row) => row.slug === FOUNDING_EVENT.slug)) {
+    // Serve the built-in founding event only while NO row with its slug
+    // exists — in any status. A draft founding row means an admin unpublished
+    // it, so the synthetic default must not re-inject it as published.
+    const foundingRow = await findBySlug(ctx, FOUNDING_EVENT.slug);
+    if (!foundingRow) {
       events.unshift(
         await publicShape(
           ctx,
@@ -260,6 +268,8 @@ export const register = mutation({
       throw new Error("Registration for this event is not open yet.");
     if (event.status === "cancelled")
       throw new Error("This event was cancelled.");
+    if (Date.now() > event.startsAt + event.durationMinutes * 60_000)
+      throw new Error("This event has already ended — registration is closed.");
 
     const existing = await findRegistration(ctx, event._id, user._id);
     if (existing?.status === "registered")
@@ -306,7 +316,7 @@ export const adminList = query({
           await ctx.db
             .query("eventRegistrations")
             .withIndex("by_event", (s) => s.eq("eventId", row._id))
-            .take(500)
+            .collect()
         ).filter((r) => r.status === "registered");
         const users = await Promise.all(regs.map((r) => ctx.db.get(r.userId)));
         const becameSellers = users.filter((u) => u?.isSeller === true).length;
@@ -359,7 +369,8 @@ export const adminStats = query({
   args: {},
   handler: async (ctx) => {
     await requireAdmin(ctx);
-    const regs = (await ctx.db.query("eventRegistrations").take(1000)).filter(
+    // collect() so conversion counts are exact, not silently capped.
+    const regs = (await ctx.db.query("eventRegistrations").collect()).filter(
       (r) => r.status === "registered",
     );
     const userIds = [...new Set(regs.map((r) => r.userId))];

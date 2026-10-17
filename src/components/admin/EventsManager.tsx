@@ -12,7 +12,12 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
-import { formatDateTime } from "@/lib/format";
+import {
+  errorMessage,
+  formatDateTime,
+  parseDatetimeLocal,
+  toDatetimeLocal,
+} from "@/lib/format";
 import { useMutation, useQuery } from "convex/react";
 import {
   CalendarDays,
@@ -31,22 +36,6 @@ import { toast } from "sonner";
 
 type EventDoc = Doc<"marketEvents">;
 
-function toLocalInputValue(ms: number): string {
-  const shifted = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000);
-  return shifted.toISOString().slice(0, 16);
-}
-
-function fromLocalInputValue(value: string): number {
-  const ms = new Date(value).getTime();
-  return Number.isFinite(ms) ? ms : Date.now();
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error
-    ? error.message.replace(/^Error: /, "")
-    : "Something went wrong — please try again.";
-}
-
 /** Create/edit form; state initializes lazily from props (no effects). */
 function EventForm({
   event,
@@ -62,7 +51,7 @@ function EventForm({
   const [tagline, setTagline] = useState(event?.tagline ?? "");
   const [detailsText, setDetailsText] = useState(event?.details.join("\n") ?? "");
   const [startsAtLocal, setStartsAtLocal] = useState(() =>
-    toLocalInputValue(event?.startsAt ?? Date.now() + 7 * 86_400_000),
+    toDatetimeLocal(event?.startsAt ?? Date.now() + 7 * 86_400_000),
   );
   const [duration, setDuration] = useState(String(event?.durationMinutes ?? 90));
   const [joinInstructions, setJoinInstructions] = useState(
@@ -77,6 +66,13 @@ function EventForm({
 
   const submit = async (event_: React.FormEvent<HTMLFormElement>) => {
     event_.preventDefault();
+    // Reject a cleared/invalid date outright instead of silently defaulting
+    // the event to "right now".
+    const startsAt = parseDatetimeLocal(startsAtLocal);
+    if (startsAt === null) {
+      toast.error("Pick a valid start date and time.");
+      return;
+    }
     setSaving(true);
     const payload = {
       title,
@@ -85,7 +81,7 @@ function EventForm({
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean),
-      startsAt: fromLocalInputValue(startsAtLocal),
+      startsAt,
       durationMinutes: Number(duration),
       joinInstructions,
       joinUrl: joinUrl.trim() || undefined,
