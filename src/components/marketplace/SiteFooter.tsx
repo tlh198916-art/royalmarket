@@ -11,6 +11,7 @@ const columns = [
       { to: "/?view=categories", label: "Categories" },
       { to: "/sell", label: "Start selling" },
       { to: "/sell#fees", label: "Fees & payouts" },
+      { to: "/events", label: "Seller events" },
       { to: "/pricing", label: "Plans & pricing" },
     ],
   },

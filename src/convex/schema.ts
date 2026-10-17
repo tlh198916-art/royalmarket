@@ -343,6 +343,47 @@ const schema = defineSchema(
       productId: v.optional(v.id("products")),
       query: v.optional(v.string()),
     }).index("by_type", ["type"]),
+
+    /**
+     * Seller-attract marketing events (e.g. the Founding Sellers Launch
+     * Event). Named marketEvents because `events` is the analytics table.
+     */
+    marketEvents: defineTable({
+      slug: v.string(),
+      title: v.string(),
+      tagline: v.string(),
+      details: v.array(v.string()), // agenda / description bullets
+      startsAt: v.number(), // epoch ms (UTC)
+      durationMinutes: v.number(),
+      format: v.union(v.literal("online")), // all events are online for now
+      joinInstructions: v.string(), // how registered attendees join
+      joinUrl: v.optional(v.string()), // shown only to registered attendees
+      status: v.union(
+        v.literal("draft"),
+        v.literal("published"),
+        v.literal("cancelled"),
+      ),
+      createdBy: v.optional(v.id("users")),
+      createdAt: v.number(),
+    })
+      .index("by_slug", ["slug"])
+      .index("by_status", ["status"]),
+
+    /** One row per (event, user); unique via by_event_user. */
+    eventRegistrations: defineTable({
+      eventId: v.id("marketEvents"),
+      userId: v.id("users"),
+      email: v.string(),
+      name: v.optional(v.string()),
+      status: v.union(v.literal("registered"), v.literal("cancelled")),
+      createdAt: v.number(),
+      // Set when the registrant later becomes a seller (tracked at
+      // registration time is impossible, so conversion is derived in
+      // queries by checking the user's current seller status).
+    })
+      .index("by_event", ["eventId"])
+      .index("by_event_user", ["eventId", "userId"])
+      .index("by_user", ["userId"]),
   },
   {
     schemaValidation: false,

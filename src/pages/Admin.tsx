@@ -1,3 +1,4 @@
+import { EventsManager } from "@/components/admin/EventsManager";
 import { PlatformSettings } from "@/components/admin/PlatformSettings";
 import { EmptyState } from "@/components/marketplace/EmptyState";
 import { Layout } from "@/components/marketplace/Layout";
@@ -726,6 +727,10 @@ export default function Admin() {
         {/* Platform settings: plans, commissions, subscriptions */}
         <section className="mt-6">
           <PlatformSettings />
+        </section>
+
+        <section className="mt-6">
+          <EventsManager />
         </section>
       </div>
     </Layout>
