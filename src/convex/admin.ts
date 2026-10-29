@@ -1,23 +1,43 @@
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
+import { ADMIN_EMAIL, isAdminEmail, isRetiredAdminEmail } from "./adminConfig";
 import { requireAdmin, requireUser } from "./lib";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/** Admin bootstrap: first signed-in user can claim the only admin seat. */
+/** True when this user may hold admin authority right now. */
+function canAdmin(user: Doc<"users"> | null): boolean {
+  return !!user && user.role === "admin" && !isRetiredAdminEmail(user.email);
+}
+
+/**
+ * Admin bootstrap: the administrative mailbox claims the only admin seat.
+ *
+ * It used to be "first verified account wins", which left the seat open to any
+ * sign-up and to the retired owner address. Only `ADMIN_EMAIL` may claim now.
+ */
 export const claimAdmin = mutation({
   args: {},
   handler: async (ctx) => {
     const user = await requireUser(ctx);
     if (user.isAnonymous || !user.emailVerificationTime)
       throw new Error("Verify your email before claiming admin access.");
+    if (isRetiredAdminEmail(user.email))
+      throw new Error(
+        `Admin access is no longer available for this address. Use ${ADMIN_EMAIL}.`,
+      );
+    if (!isAdminEmail(user.email))
+      throw new Error(
+        `Admin access is restricted to ${ADMIN_EMAIL}. Sign in with that address to claim it.`,
+      );
     if (user.role === "admin") return true;
-    const existing = await ctx.db
+    const admins = await ctx.db
       .query("users")
       .withIndex("by_role", (s) => s.eq("role", "admin"))
-      .take(1);
-    if (existing.length > 0)
+      .collect();
+    // Retired seats don't count: the new mailbox can still take over.
+    if (admins.some((admin) => !isRetiredAdminEmail(admin.email)))
       throw new Error("An admin already exists. Ask them for access.");
     await ctx.db.patch(user._id, { role: "admin" });
     return true;
@@ -32,14 +52,65 @@ export const adminStatus = query({
     const admins = await ctx.db
       .query("users")
       .withIndex("by_role", (s) => s.eq("role", "admin"))
-      .take(1);
+      .collect();
+    const activeAdmins = admins.filter(
+      (admin) => !isRetiredAdminEmail(admin.email),
+    );
     return {
       signedIn: user !== null,
-      isAdmin: user?.role === "admin",
-      adminExists: admins.length > 0,
-      canClaim: !!user && user.role !== "admin" && admins.length === 0,
+      isAdmin: canAdmin(user),
+      // A retired mailbox that still carries the role is not an admin.
+      roleIsStale: !!user && user.role === "admin" && isRetiredAdminEmail(user.email),
+      adminEmail: ADMIN_EMAIL,
+      isAdminEmail: !!user && isAdminEmail(user.email),
+      adminExists: activeAdmins.length > 0,
+      canClaim:
+        !!user &&
+        !isRetiredAdminEmail(user.email) &&
+        isAdminEmail(user.email) &&
+        user.role !== "admin" &&
+        activeAdmins.length === 0,
       userId: user?._id ?? null,
     };
+  },
+});
+
+/**
+ * One-off admin handover, run with `bun convex run admin:enforceAdminEmail`.
+ *
+ * Demotes every retired mailbox that still carries `role: "admin"` and grants
+ * the seat to the administrative mailbox if that account already exists and is
+ * verified. Safe to re-run.
+ */
+export const enforceAdminEmail = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const users = await ctx.db.query("users").collect();
+
+    const revoked: string[] = [];
+    for (const user of users) {
+      if (user.role === "admin" && isRetiredAdminEmail(user.email)) {
+        await ctx.db.patch(user._id, { role: "user" });
+        revoked.push(user.email ?? user._id);
+      }
+    }
+
+    const owner = users.find((user) => isAdminEmail(user.email));
+    let granted = false;
+    let note: string;
+    if (!owner) {
+      note = `No account exists for ${ADMIN_EMAIL} yet. Register with that address, verify it, then run this again.`;
+    } else if (owner.isAnonymous || !owner.emailVerificationTime) {
+      note = `The ${ADMIN_EMAIL} account exists but is not email-verified yet.`;
+    } else if (owner.role === "admin") {
+      note = `${ADMIN_EMAIL} already holds admin access.`;
+    } else {
+      await ctx.db.patch(owner._id, { role: "admin" });
+      granted = true;
+      note = `${ADMIN_EMAIL} now holds admin access.`;
+    }
+
+    return { revoked, granted, note };
   },
 });
 

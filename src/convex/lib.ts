@@ -1,4 +1,5 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { isRetiredAdminEmail } from "./adminConfig";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 
@@ -41,10 +42,16 @@ export async function requireVerifiedUser(ctx: Ctx): Promise<Doc<"users">> {
   return user;
 }
 
-/** Throws unless the caller is an admin. */
+/**
+ * Throws unless the caller is an admin.
+ *
+ * Admin authority now lives with a single mailbox, so a retired address keeps
+ * failing this check even if its `role` was never cleaned up: the role alone is
+ * not enough.
+ */
 export async function requireAdmin(ctx: Ctx): Promise<Doc<"users">> {
   const user = await requireUser(ctx);
-  if (user.role !== "admin") {
+  if (user.role !== "admin" || isRetiredAdminEmail(user.email)) {
     throw new Error("Admin access required.");
   }
   return user;

@@ -1,5 +1,6 @@
 import { Brand } from "@/components/marketplace/Brand";
 import { Badge } from "@/components/ui/badge";
+import { ADMIN_EMAIL } from "@/convex/adminConfig";
 import { HeartHandshake, Mail, ShieldCheck } from "lucide-react";
 import { Link } from "react-router";
 
@@ -83,10 +84,10 @@ export function SiteFooter() {
             transparently.
           </p>
           <a
-            href="mailto:Myrayalmarket@gmail.com"
+            href={`mailto:${ADMIN_EMAIL}`}
             className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
           >
-            <Mail className="size-3.5" /> Questions? Myrayalmarket@gmail.com
+            <Mail className="size-3.5" /> Questions? {ADMIN_EMAIL}
           </a>
         </div>
       </div>

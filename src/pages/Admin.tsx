@@ -176,13 +176,16 @@ export default function Admin() {
                 <ShieldCheck className="size-6" />
               </div>
               <h1 className="mt-4 text-xl font-bold tracking-tight">
-                First-run admin claim
+                Claim admin access
               </h1>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                No admin exists on this marketplace yet. The first verified
-                account can claim the admin seat to access metrics,
-                moderation, and support tickets. This button disappears once
-                an admin exists.
+                Administration is held by one mailbox: {" "}
+                <span className="font-medium text-foreground">
+                  {status.adminEmail}
+                </span>
+                . No admin is active right now, so this verified account can
+                claim the seat to access metrics, moderation, and support
+                tickets.
               </p>
               <Button
                 className="mt-5"
@@ -192,11 +195,22 @@ export default function Admin() {
                 {claiming ? "Claiming…" : "Claim admin access"}
               </Button>
             </div>
+          ) : status.roleIsStale ? (
+            <EmptyState
+              icon={ShieldCheck}
+              title="Admin access moved"
+              description={`The administrative account is now ${status.adminEmail}. This account no longer has admin permissions.`}
+              action={
+                <Button asChild>
+                  <Link to="/dashboard">Back to account</Link>
+                </Button>
+              }
+            />
           ) : (
             <EmptyState
               icon={ShieldCheck}
               title="Admin access required"
-              description="This dashboard is restricted to marketplace administrators. If you believe you should have access, ask an existing admin to grant it."
+              description={`This dashboard is restricted to the marketplace administrator (${status.adminEmail}). If you believe you should have access, ask an existing admin to grant it.`}
               action={
                 <Button asChild>
                   <Link to="/dashboard">Back to account</Link>
