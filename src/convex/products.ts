@@ -3,10 +3,12 @@ import { isValidCategoryId } from "./categories";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   getUser,
+  isMarketplaceAdmin,
   normalizeSearchQuery,
   requireUser,
   requireVerifiedUser,
   validateListingInput,
+  validateReturnsInput,
 } from "./lib";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 
@@ -124,14 +126,14 @@ async function sellerPublicInfo(
   sellerId: Id<"users">,
 ) {
   const seller = await ctx.db.get(sellerId);
-  if (!seller) return null;
+  if (!seller?.isSeller) return null;
   return {
     id: sellerId,
     name: seller.name ?? seller.shopName ?? "Seller",
     shopName: seller.shopName,
     bio: seller.sellerBio,
     location: seller.location,
-    isSeller: !!seller.isSeller,
+    isSeller: true,
     joinedAt: seller._creationTime,
     image: seller.image,
     sellerType: seller.sellerType ?? "individual",
@@ -143,14 +145,19 @@ export async function enrich(
   product: Doc<"products">,
 ) {
   const seller = await sellerPublicInfo(ctx, product.sellerId);
-  const storageId = product.imageStorageIds?.[0];
-  const imageUrl = storageId
-    ? await ctx.storage.getUrl(storageId as Id<"_storage">)
-    : null;
+  const imageUrls = await Promise.all(
+    (product.imageStorageIds ?? []).map((storageId) =>
+      ctx.storage.getUrl(storageId as Id<"_storage">),
+    ),
+  );
+  const { moderatorNote: _moderatorNote, embedding: _embedding, ...publicProduct } = product;
+  void _moderatorNote;
+  void _embedding;
   return {
-    ...product,
+    ...publicProduct,
     seller,
-    imageUrl,
+    imageUrl: imageUrls[0] ?? null,
+    imageUrls: imageUrls.filter((url): url is string => url !== null),
     available: product.status === "active" && product.quantity > 0,
   };
 }
@@ -282,18 +289,29 @@ export const get = query({
     const product = await ctx.db.get(productId);
     if (!product) return null;
     const viewer = await getUser(ctx);
+    const isOwner = viewer?._id === product.sellerId;
+    if (
+      product.status !== "active" &&
+      !isOwner &&
+      !isMarketplaceAdmin(viewer)
+    ) {
+      return null;
+    }
     const imageUrls = await Promise.all(
       (product.imageStorageIds ?? []).map((id) =>
         ctx.storage.getUrl(id as Id<"_storage">),
       ),
     );
     const seller = await sellerPublicInfo(ctx, product.sellerId);
+    const { moderatorNote: _moderatorNote, embedding: _embedding, ...publicProduct } = product;
+    void _moderatorNote;
+    void _embedding;
     return {
-      ...product,
+      ...publicProduct,
       seller,
       imageUrls: imageUrls.filter((u): u is string => u !== null),
       available: product.status === "active" && product.quantity > 0,
-      isOwner: viewer?._id === product.sellerId,
+      isOwner,
     };
   },
 });
@@ -345,12 +363,8 @@ export const create = mutation({
     if (error) throw new Error(error);
     if (!isValidCategoryId(args.categoryId))
       throw new Error("Choose a valid category.");
-    if (args.returns.days < 0 || args.returns.days > 90) {
-      throw new Error("Return window must be between 0 and 90 days.");
-    }
-    if (args.returns.days > 0 && !args.returns.accepted) {
-      throw new Error("Return days should be 0 when returns are not accepted.");
-    }
+    const returnsError = validateReturnsInput(args.returns);
+    if (returnsError) throw new Error(returnsError);
 
     const productId = await ctx.db.insert("products", {
       sellerId: user._id,
@@ -405,7 +419,7 @@ export const update = mutation({
     const user = await requireVerifiedUser(ctx);
     const existing = await ctx.db.get(args.id);
     if (!existing) throw new Error("This listing no longer exists.");
-    const isAdmin = user.role === "admin";
+    const isAdmin = isMarketplaceAdmin(user);
     if (existing.sellerId !== user._id && !isAdmin)
       throw new Error("You can only edit your own listings.");
     if (existing.status === "removed" && !isAdmin)
@@ -425,6 +439,8 @@ export const update = mutation({
     if (error) throw new Error(error);
     if (!isValidCategoryId(args.categoryId))
       throw new Error("Choose a valid category.");
+    const returnsError = validateReturnsInput(args.returns);
+    if (returnsError) throw new Error(returnsError);
 
     const wasActive = existing.status === "active";
     await ctx.db.patch(args.id, {
@@ -464,7 +480,7 @@ export const setStatus = mutation({
     const user = await requireVerifiedUser(ctx);
     const existing = await ctx.db.get(args.id);
     if (!existing) throw new Error("This listing no longer exists.");
-    if (existing.sellerId !== user._id && user.role !== "admin")
+    if (existing.sellerId !== user._id && !isMarketplaceAdmin(user))
       throw new Error("You can only change your own listings.");
     if (existing.status === "removed")
       throw new Error(
@@ -491,7 +507,7 @@ export const remove = mutation({
     const user = await requireUser(ctx);
     const existing = await ctx.db.get(args.id);
     if (!existing) return;
-    if (existing.sellerId !== user._id && user.role !== "admin")
+    if (existing.sellerId !== user._id && !isMarketplaceAdmin(user))
       throw new Error("You can only delete your own listings.");
     const orderItems = await ctx.db
       .query("orderItems")

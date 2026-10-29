@@ -49,9 +49,15 @@ export async function requireVerifiedUser(ctx: Ctx): Promise<Doc<"users">> {
  * failing this check even if its `role` was never cleaned up: the role alone is
  * not enough.
  */
+export function isMarketplaceAdmin(
+  user: Doc<"users"> | null | undefined,
+): user is Doc<"users"> {
+  return !!user && user.role === "admin" && !isRetiredAdminEmail(user.email);
+}
+
 export async function requireAdmin(ctx: Ctx): Promise<Doc<"users">> {
   const user = await requireUser(ctx);
-  if (user.role !== "admin" || isRetiredAdminEmail(user.email)) {
+  if (!isMarketplaceAdmin(user)) {
     throw new Error("Admin access required.");
   }
   return user;
@@ -88,6 +94,18 @@ export function validateListingInput(args: {
     return "Inventory must be a whole number of 0 or more.";
   if (args.quantity > 100000) return "Inventory must be 100,000 or fewer.";
   if (!args.categoryId) return "Choose a category.";
+  return null;
+}
+
+/** Validate the listing return window shared by create and update. */
+export function validateReturnsInput(returns: {
+  accepted: boolean;
+  days: number;
+}): string | null {
+  if (!Number.isInteger(returns.days) || returns.days < 0 || returns.days > 90)
+    return "Return window must be between 0 and 90 days.";
+  if (returns.days > 0 && !returns.accepted)
+    return "Return days should be 0 when returns are not accepted.";
   return null;
 }
 

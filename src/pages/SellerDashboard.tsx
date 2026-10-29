@@ -435,13 +435,13 @@ export default function SellerDashboard() {
                           >
                             {badge.label}
                           </Badge>
-                          {product.moderatorNote && (
+                          {product.status === "removed" && (
                             <Badge
                               variant="outline"
                               className="gap-1 border-amber-400/40 text-[10px] text-amber-400"
                             >
                               <AlertTriangle className="size-3" />
-                              {product.moderatorNote}
+                              Moderator review — contact support for details
                             </Badge>
                           )}
                         </div>

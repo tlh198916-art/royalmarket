@@ -5,6 +5,7 @@ import { CATEGORIES } from "./categories";
 import { api, internal } from "./_generated/api";
 import { action } from "./_generated/server";
 import type { EnrichedProduct } from "./search";
+import { isMarketplaceAdmin } from "./lib";
 
 const EMBED_MODEL = "gemini-embedding-001";
 const EMBED_DIMS = 768;
@@ -227,7 +228,7 @@ export const reindex = action({
       id: args.productId,
     });
     if (!product) return { indexed: 0 };
-    if (product.sellerId !== user._id && user.role !== "admin") {
+    if (product.sellerId !== user._id && !isMarketplaceAdmin(user)) {
       throw new Error("You can only index your own listings.");
     }
     const vector = await embed(embedText(product), "RETRIEVAL_DOCUMENT");
@@ -244,7 +245,7 @@ export const backfillEmbeddings = action({
   args: { batchSize: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const user = await ctx.runQuery(api.users.currentUser);
-    if (!user || user.role !== "admin") {
+    if (!isMarketplaceAdmin(user)) {
       throw new Error("Only admins can rebuild the search index.");
     }
     geminiKey(); // fail fast with a clear message when no key is configured

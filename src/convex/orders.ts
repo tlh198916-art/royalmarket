@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import type { OrderStatus } from "./schema";
 import type { Doc, Id } from "./_generated/dataModel";
-import { requireUser, requireVerifiedUser } from "./lib";
+import { isMarketplaceAdmin, requireUser, requireVerifiedUser } from "./lib";
 import { accrueCommission, reverseCommission } from "./commissions";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 
@@ -99,9 +99,9 @@ export const place = mutation({
       quantity: number;
     }[] = [];
     for (const item of args.items) {
-      const quantity = Math.floor(item.quantity);
-      if (!Number.isFinite(quantity) || quantity < 1)
-        throw new Error("Cart quantities must be at least 1.");
+      const quantity = item.quantity;
+      if (!Number.isInteger(quantity) || quantity < 1)
+        throw new Error("Cart quantities must be whole numbers of at least 1.");
       const product = await ctx.db.get(item.productId);
       if (!product) throw new Error("A cart item no longer exists.");
       if (product.status !== "active")
@@ -141,10 +141,16 @@ export const place = mutation({
     // product's settings and charge that seller's fee once per order group
     // (the max fee among the buyer's lines from that seller — never per item).
     const sellerIds = [...new Set(lines.map((l) => l.product.sellerId))];
-    if (args.fulfillments.length !== sellerIds.length)
+    const fulfillmentSellerIds = new Set(args.fulfillments.map((f) => f.sellerId));
+    if (
+      fulfillmentSellerIds.size !== args.fulfillments.length ||
+      fulfillmentSellerIds.size !== sellerIds.length ||
+      sellerIds.some((sellerId) => !fulfillmentSellerIds.has(sellerId))
+    ) {
       throw new Error(
-        "Choose a fulfillment option for every seller in your cart.",
+        "Choose exactly one fulfillment option for every seller in your cart.",
       );
+    }
     let shippingFeeCents = 0;
     const fulfillmentEntries: {
       sellerId: Id<"users">;
@@ -158,11 +164,6 @@ export const place = mutation({
     for (const choice of args.fulfillments) {
       if (!sellerIds.includes(choice.sellerId))
         throw new Error("That seller is not part of this order.");
-      if (
-        args.fulfillments.filter((f) => f.sellerId === choice.sellerId).length >
-        1
-      )
-        throw new Error("Choose one fulfillment option per seller.");
       const sellerLines = lines.filter(
         (l) => l.product.sellerId === choice.sellerId,
       );
@@ -345,7 +346,7 @@ export const updateItemStatus = mutation({
     const user = await requireUser(ctx);
     const item = await ctx.db.get(args.itemId);
     if (!item) throw new Error("That order item no longer exists.");
-    if (item.sellerId !== user._id && user.role !== "admin")
+    if (item.sellerId !== user._id && !isMarketplaceAdmin(user))
       throw new Error("You can only update orders for your own listings.");
 
     // Both parties must approve the fulfillment deal before dispatch.

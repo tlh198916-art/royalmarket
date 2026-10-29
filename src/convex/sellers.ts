@@ -35,9 +35,7 @@ export const become = mutation({
     shopName: v.string(),
     bio: v.optional(v.string()),
     location: v.optional(v.string()),
-    sellerType: v.optional(
-      v.union(v.literal("individual"), v.literal("business")),
-    ),
+    sellerType: v.optional(v.literal("individual")),
   },
   handler: async (ctx, args) => {
     const user = await requireVerifiedUser(ctx);
@@ -49,14 +47,15 @@ export const become = mutation({
     const bio = args.bio?.trim().slice(0, 500) || undefined;
     const location = args.location?.trim().slice(0, 80) || undefined;
 
+    // A public onboarding call can only establish a free individual shop.
+    // Paid business identity is assigned by the subscription flow.
     await ctx.db.patch(user._id, {
       isSeller: true,
       shopName,
       sellerBio: bio,
       location,
-      // Keep an existing business type unless explicitly downgrading here;
-      // individual selling never requires business registration.
-      sellerType: args.sellerType ?? user.sellerType ?? "individual",
+      // Do not allow client-supplied sellerType to unlock business features.
+      sellerType: user.sellerType === "business" ? "business" : "individual",
       name: user.name ?? shopName,
     });
     return true;
@@ -76,6 +75,19 @@ export const setFulfillmentDefaults = mutation({
       throw new Error("Pickup area must be 120 characters or fewer.");
     if (args.defaults.delivery.area && args.defaults.delivery.area.length > 120)
       throw new Error("Delivery area must be 120 characters or fewer.");
+    if (
+      !Number.isInteger(args.defaults.shipping.handlingDays) ||
+      args.defaults.shipping.handlingDays < 0 ||
+      args.defaults.shipping.handlingDays > 60
+    )
+      throw new Error("Handling time must be between 0 and 60 days.");
+    if (
+      args.defaults.delivery.estimatedDays !== undefined &&
+      (!Number.isInteger(args.defaults.delivery.estimatedDays) ||
+        args.defaults.delivery.estimatedDays < 0 ||
+        args.defaults.delivery.estimatedDays > 60)
+    )
+      throw new Error("Estimated delivery must be between 0 and 60 days.");
     for (const fee of [
       args.defaults.shipping.feeCents,
       args.defaults.delivery.feeCents,
@@ -127,6 +139,15 @@ export const updateBusinessProfile = mutation({
       throw new Error(
         "Branded storefronts are a business feature. Upgrade from your seller dashboard.",
       );
+    const subscription = await ctx.db
+      .query("subscriptions")
+      .withIndex("by_user", (s) => s.eq("userId", user._id))
+      .order("desc")
+      .first();
+    if (!subscription || subscription.status !== "active")
+      throw new Error(
+        "An active business subscription is required to manage storefront branding.",
+      );
 
     const patch: Partial<typeof user> = {};
     if (args.businessContact !== undefined) {
@@ -153,6 +174,14 @@ export const updateBusinessProfile = mutation({
       patch.businessLogoStorageId = args.logoStorageId || undefined;
     if (args.bannerStorageId !== undefined)
       patch.businessBannerStorageId = args.bannerStorageId || undefined;
+    for (const storageId of [args.logoStorageId, args.bannerStorageId]) {
+      if (!storageId) continue;
+      // Storage IDs are only accepted from the account's own upload flow in
+      // the seller dashboard. Database ownership cannot be proven from a
+      // public storage ID, so only verify its syntactic table ID here.
+      if (!storageId.startsWith("kg") && storageId.length < 8)
+        throw new Error("The selected storefront image ID is invalid.");
+    }
 
     await ctx.db.patch(user._id, patch);
     return true;
@@ -199,7 +228,7 @@ export const publicProfile = query({
     }
     if (!sellerId) return null;
     const seller = await ctx.db.get(sellerId);
-    if (!seller) return null;
+    if (!seller || !seller.isSeller) return null;
 
     const products = await ctx.db
       .query("products")
