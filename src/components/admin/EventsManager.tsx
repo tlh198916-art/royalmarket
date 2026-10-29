@@ -312,7 +312,8 @@ export function EventsManager() {
       )}
       <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <TrendingUp className="size-3.5" /> &quot;Became sellers&quot; counts
-        registrants who later created a seller account on the marketplace.
+        registrants who were not sellers when they registered and have since
+        created a seller account.
       </p>
 
       {creating && (

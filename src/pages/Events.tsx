@@ -7,12 +7,14 @@ import { eventPhase, useCountdown } from "@/hooks/use-countdown";
 import { errorMessage, pluralize } from "@/lib/format";
 import { buildShareLinks } from "@/lib/socialShare";
 import { useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
   BadgeCheck,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   Copy,
   Crown,
@@ -29,10 +31,14 @@ import {
   Users,
   Video,
   X as XIcon,
+  XCircle,
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
+
+/** One row of the public events query (synthetic founding event included). */
+type PublicEvent = FunctionReturnType<typeof api.marketEvents.list>[number];
 
 function formatEventDate(startsAt: number, endsAt: number) {
   const start = new Date(startsAt);
@@ -178,7 +184,8 @@ function RegisterButton({
   const [pending, setPending] = useState(false);
   const { nowMs } = useCountdown(startsAt, endsAt);
   const ended = eventPhase(startsAt, endsAt, nowMs) === "ended";
-  const blocked = disabled === true || ended;
+  const cancelled = disabled === true;
+  const blocked = cancelled || ended;
 
   if (isLoading) {
     return (
@@ -187,10 +194,19 @@ function RegisterButton({
       </Button>
     );
   }
-  if (blocked && !registered) {
+  // Cancellation wins over the signed-in/registered states below, so an
+  // attendee never sees a green confirmation next to a cancelled event.
+  if (cancelled) {
+    return (
+      <Button size="lg" variant="outline" disabled className="min-w-52">
+        <XCircle className="mr-2 size-4" /> Event cancelled
+      </Button>
+    );
+  }
+  if (ended && !registered) {
     return (
       <Button size="lg" disabled className="min-w-52">
-        {ended ? "Registration closed" : "Registration unavailable"}
+        Registration closed
       </Button>
     );
   }
@@ -204,17 +220,12 @@ function RegisterButton({
     );
   }
   if (registered) {
+    // Not a link: the join panel for this specific event sits beside the
+    // button (hero) or behind the card's "Event details" toggle.
     return (
-      <Button
-        asChild
-        size="lg"
-        variant="outline"
-        className="min-w-52 border-emerald-400/50 text-emerald-300"
-      >
-        <Link to="/events#event-details">
-          <CheckCircle2 className="mr-2 size-4" /> You&apos;re registered
-        </Link>
-      </Button>
+      <span className="flex min-w-52 items-center justify-center gap-2 rounded-lg border border-emerald-400/50 px-4 py-3 text-sm font-semibold text-emerald-300">
+        <CheckCircle2 className="size-4" /> You&apos;re registered
+      </span>
     );
   }
   return (
@@ -253,6 +264,154 @@ function RegisterButton({
   );
 }
 
+/** Cancels the signed-in viewer's registration for one event. */
+function CancelRegistration({ slug }: { slug: string }) {
+  const unregister = useMutation(api.marketEvents.unregister);
+  const [pending, setPending] = useState(false);
+
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={async () => {
+        setPending(true);
+        try {
+          const removed = await unregister({ slug });
+          if (removed) toast.success("Registration cancelled.");
+          else toast.message("You weren't registered for this event.");
+        } catch (error) {
+          toast.error(
+            errorMessage(error, "Couldn't cancel — please try again."),
+          );
+        } finally {
+          setPending(false);
+        }
+      }}
+      className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-60"
+    >
+      {pending ? "Cancelling…" : "Cancel registration"}
+    </button>
+  );
+}
+
+/**
+ * How to attend one event, plus the private join link and cancel control for
+ * registered attendees. The server strips joinUrl unless the viewer is
+ * registered, and every event renders this panel — featured or not — so
+ * attendees of secondary events can still get in and unregister.
+ */
+function JoinPanel({ event }: { event: PublicEvent }) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm leading-6 text-muted-foreground">
+        {event.joinInstructions}
+      </p>
+      {event.registered && event.joinUrl && (
+        <a
+          href={event.joinUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-between gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 p-4 text-sm font-semibold text-emerald-300 transition-colors hover:bg-emerald-400/15"
+        >
+          <span className="flex items-center gap-2">
+            <Link2 className="size-4" /> Your private join link
+          </span>
+          <ArrowRight className="size-4" />
+        </a>
+      )}
+      {event.registered && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-secondary/40 p-4">
+          <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <BadgeCheck className="size-4 text-emerald-400" />
+            Registered as an attendee
+          </p>
+          <CancelRegistration slug={event.slug} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A non-featured event card with its own expandable attendance details. */
+function MoreEventCard({ event }: { event: PublicEvent }) {
+  const [open, setOpen] = useState(false);
+  const { date, time } = formatEventDate(event.startsAt, event.endsAt);
+  const panelId = `event-details-${event.slug}`;
+
+  return (
+    <div className="rounded-3xl border border-border/70 bg-card p-6">
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="font-bold leading-6">{event.title}</h3>
+        {event.status === "cancelled" && (
+          <Badge
+            variant="outline"
+            className="shrink-0 border-red-400/50 text-red-300"
+          >
+            Cancelled
+          </Badge>
+        )}
+      </div>
+      <p className="mt-2 text-sm text-muted-foreground">{event.tagline}</p>
+      <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <CalendarDays className="size-3.5" /> {date}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <Clock3 className="size-3.5" /> {time}
+        </span>
+      </p>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <RegisterButton
+          slug={event.slug}
+          registered={event.registered}
+          disabled={event.status === "cancelled"}
+          startsAt={event.startsAt}
+          endsAt={event.endsAt}
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <ChevronDown
+            className={`mr-1.5 size-4 transition-transform ${open ? "rotate-180" : ""}`}
+          />
+          {open ? "Hide details" : "Event details"}
+        </Button>
+      </div>
+      {open && (
+        <div
+          id={panelId}
+          className="mt-4 space-y-4 border-t border-border/60 pt-4"
+        >
+          <ul className="space-y-2.5">
+            {event.details.map((item, index) => (
+              <li
+                key={`${index}-${item}`}
+                className="flex items-start gap-2.5 text-sm leading-6"
+              >
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" />
+                <span className="text-foreground/90">{item}</span>
+              </li>
+            ))}
+          </ul>
+          <div>
+            <h4 className="flex items-center gap-2 text-sm font-bold">
+              <Video className="size-4 text-primary" /> Joining online
+            </h4>
+            <div className="mt-2">
+              <JoinPanel event={event} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const BENEFITS = {
   individual: [
     "No shop or business registration needed — sell as yourself.",
@@ -271,7 +430,6 @@ const BENEFITS = {
 export default function Events() {
   const { isAuthenticated } = useAuth();
   const eventsQuery = useQuery(api.marketEvents.list);
-  const unregister = useMutation(api.marketEvents.unregister);
 
   const events = eventsQuery ?? [];
   const featured = events[0];
@@ -285,8 +443,34 @@ export default function Events() {
       <section className="relative overflow-hidden border-b border-border/70">
         <div className="hero-glow pointer-events-none absolute inset-0" aria-hidden />
         <div className="page-container relative py-14 sm:py-20">
-          {featured === undefined ? (
+          {eventsQuery === undefined ? (
             <div className="mx-auto h-64 max-w-3xl animate-pulse rounded-3xl bg-secondary/50" />
+          ) : featured === undefined ? (
+            <div className="mx-auto max-w-xl text-center">
+              <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <CalendarDays className="size-6" />
+              </div>
+              <h1 className="mt-4 text-3xl font-extrabold tracking-tight sm:text-4xl">
+                No events scheduled right now
+              </h1>
+              <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                New seller events are announced here as soon as they&apos;re
+                published. In the meantime you can browse the marketplace or set
+                up your seller account — individual selling is free.
+              </p>
+              <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                <Button asChild size="lg">
+                  <Link to={sellerHref}>
+                    <Store className="mr-2 size-4" /> Become a Seller
+                  </Link>
+                </Button>
+                <Button asChild size="lg" variant="outline">
+                  <Link to="/products">
+                    Browse products <ArrowRight className="ml-2 size-4" />
+                  </Link>
+                </Button>
+              </div>
+            </div>
           ) : (() => {
             const { date, time } = formatEventDate(featured.startsAt, featured.endsAt);
             const cancelled = featured.status === "cancelled";
@@ -379,8 +563,11 @@ export default function Events() {
                 <Ticket className="size-5 text-primary" /> What happens at the event
               </h2>
               <ul className="mt-5 space-y-3.5">
-                {featured.details.map((item) => (
-                  <li key={item} className="flex items-start gap-3 text-sm leading-6">
+                {featured.details.map((item, index) => (
+                  <li
+                    key={`${index}-${item}`}
+                    className="flex items-start gap-3 text-sm leading-6"
+                  >
                     <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" />
                     <span className="text-foreground/90">{item}</span>
                   </li>
@@ -401,55 +588,9 @@ export default function Events() {
               <h2 className="flex items-center gap-2 text-xl font-bold tracking-tight">
                 <Video className="size-5 text-primary" /> Joining online
               </h2>
-              <p className="mt-4 text-sm leading-6 text-muted-foreground">
-                {featured.joinInstructions}
-              </p>
-              {featured.registered && featured.joinUrl && (
-                <a
-                  href={featured.joinUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-5 flex items-center justify-between gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 p-4 text-sm font-semibold text-emerald-300 transition-colors hover:bg-emerald-400/15"
-                >
-                  <span className="flex items-center gap-2">
-                    <Link2 className="size-4" /> Your private join link
-                  </span>
-                  <ArrowRight className="size-4" />
-                </a>
-              )}
-              {featured.registered && (
-                <div className="mt-5 flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-secondary/40 p-4">
-                  <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                    <BadgeCheck className="size-4 text-emerald-400" />
-                    Registered as an attendee
-                  </p>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        const removed = await unregister({
-                          slug: featured.slug,
-                        });
-                        if (removed) toast.success("Registration cancelled.");
-                        else
-                          toast.message(
-                            "You weren't registered for this event.",
-                          );
-                      } catch (error) {
-                        toast.error(
-                          errorMessage(
-                            error,
-                            "Couldn't cancel — please try again.",
-                          ),
-                        );
-                      }
-                    }}
-                    className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                  >
-                    Cancel registration
-                  </button>
-                </div>
-              )}
+              <div className="mt-4">
+                <JoinPanel event={featured} />
+              </div>
               <div className="mt-5 space-y-2.5 text-sm text-muted-foreground">
                 <p className="flex items-center gap-2">
                   <Globe className="size-4 text-primary" /> Join from anywhere —
@@ -555,45 +696,9 @@ export default function Events() {
           <div className="page-container">
             <h2 className="text-2xl font-extrabold tracking-tight">More events</h2>
             <div className="mt-6 grid gap-4 md:grid-cols-2">
-              {moreEvents.map((event) => {
-                const { date, time } = formatEventDate(event.startsAt, event.endsAt);
-                return (
-                  <div
-                    key={event.slug}
-                    className="rounded-3xl border border-border/70 bg-card p-6"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <h3 className="font-bold leading-6">{event.title}</h3>
-                      {event.status === "cancelled" && (
-                        <Badge
-                          variant="outline"
-                          className="shrink-0 border-red-400/50 text-red-300"
-                        >
-                          Cancelled
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="mt-2 text-sm text-muted-foreground">{event.tagline}</p>
-                    <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1.5">
-                        <CalendarDays className="size-3.5" /> {date}
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <Clock3 className="size-3.5" /> {time}
-                      </span>
-                    </p>
-                    <div className="mt-4">
-                      <RegisterButton
-                        slug={event.slug}
-                        registered={event.registered}
-                        disabled={event.status === "cancelled"}
-                        startsAt={event.startsAt}
-                        endsAt={event.endsAt}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+              {moreEvents.map((event) => (
+                <MoreEventCard key={event.slug} event={event} />
+              ))}
             </div>
           </div>
         </section>

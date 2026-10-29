@@ -377,9 +377,11 @@ const schema = defineSchema(
       name: v.optional(v.string()),
       status: v.union(v.literal("registered"), v.literal("cancelled")),
       createdAt: v.number(),
-      // Set when the registrant later becomes a seller (tracked at
-      // registration time is impossible, so conversion is derived in
-      // queries by checking the user's current seller status).
+      // Seller status captured at registration time. Conversion (registrant
+      // who later becomes a seller) is derived by comparing this with the
+      // user's current isSeller, so attendees who already sold aren't counted
+      // as conversions. Undefined on rows created before this was tracked.
+      wasSellerAtRegistration: v.optional(v.boolean()),
     })
       .index("by_event", ["eventId"])
       .index("by_event_user", ["eventId", "userId"])

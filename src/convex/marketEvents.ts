@@ -88,15 +88,24 @@ function validateEventInput(args: {
   };
 }
 
+/**
+ * Slugs owned by code-defined events. An admin-created title that slugifies to
+ * one of these would silently take over the built-in founding event (and its
+ * existing registrations), so they are never handed out.
+ */
+const RESERVED_SLUGS = new Set<string>([FOUNDING_EVENT.slug]);
+
 async function uniqueSlug(ctx: MutationCtx, title: string): Promise<string> {
   const base = eventSlug(title);
   let candidate = base;
   for (let i = 2; i < 50; i++) {
-    const existing = await ctx.db
-      .query("marketEvents")
-      .withIndex("by_slug", (s) => s.eq("slug", candidate))
-      .first();
-    if (!existing) return candidate;
+    if (!RESERVED_SLUGS.has(candidate)) {
+      const existing = await ctx.db
+        .query("marketEvents")
+        .withIndex("by_slug", (s) => s.eq("slug", candidate))
+        .first();
+      if (!existing) return candidate;
+    }
     candidate = `${base}-${i}`;
   }
   return `${base}-${Date.now()}`;
@@ -285,6 +294,8 @@ export const register = mutation({
       name: user.name,
       status: "registered",
       createdAt: Date.now(),
+      // Snapshot so "became a seller" only counts real conversions.
+      wasSellerAtRegistration: user.isSeller === true,
     });
     return { status: "registered" as const, joinUrl: event.joinUrl };
   },
@@ -318,7 +329,14 @@ export const adminList = query({
             .withIndex("by_event", (s) => s.eq("eventId", row._id))
             .collect()
         ).filter((r) => r.status === "registered");
-        const users = await Promise.all(regs.map((r) => ctx.db.get(r.userId)));
+        // Only attendees who were not sellers when they registered can
+        // convert; people who already sold are excluded.
+        const candidates = regs.filter(
+          (r) => r.wasSellerAtRegistration !== true,
+        );
+        const users = await Promise.all(
+          candidates.map((r) => ctx.db.get(r.userId)),
+        );
         const becameSellers = users.filter((u) => u?.isSeller === true).length;
         return {
           ...row,
@@ -374,8 +392,18 @@ export const adminStats = query({
       (r) => r.status === "registered",
     );
     const userIds = [...new Set(regs.map((r) => r.userId))];
-    const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
-    const becameSellers = users.filter((u) => u?.isSeller === true).length;
+    // Conversion = registered while not a seller, and is a seller now.
+    const candidateIds = [
+      ...new Set(
+        regs
+          .filter((r) => r.wasSellerAtRegistration !== true)
+          .map((r) => r.userId),
+      ),
+    ];
+    const candidates = await Promise.all(
+      candidateIds.map((id) => ctx.db.get(id)),
+    );
+    const becameSellers = candidates.filter((u) => u?.isSeller === true).length;
     const events = await ctx.db.query("marketEvents").take(200);
     return {
       totalRegistrations: regs.length,
