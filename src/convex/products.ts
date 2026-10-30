@@ -351,6 +351,13 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const user = await requireVerifiedUser(ctx);
+    // Publishing requires a seller profile. Without this check a verified
+    // account with no shop could create listings, and buyers would land on a
+    // seller page that returns null because the account never became a seller.
+    if (!user.isSeller)
+      throw new Error(
+        "Set up your free seller profile before publishing a listing.",
+      );
     const title = args.title.trim();
     const description = args.description.trim();
     const error = validateListingInput({
@@ -538,11 +545,13 @@ export const trackView = mutation({
   },
 });
 
-/** Authenticated upload URL for listing photos. */
+/** Upload URL for listing photos and storefront branding. */
 export const generateUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await requireUser(ctx);
+    // Verified accounts only: an unverified session must not be able to write
+    // files into marketplace storage.
+    await requireVerifiedUser(ctx);
     return await ctx.storage.generateUploadUrl();
   },
 });

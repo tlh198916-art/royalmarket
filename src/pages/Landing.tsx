@@ -137,7 +137,7 @@ export default function Landing() {
             <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Button asChild size="lg" className="w-full px-7 sm:w-auto">
                 <Link to="/products">
-                  Browse products <ArrowRight className="ml-2 size-4" />
+                  Shop Now <ArrowRight className="ml-2 size-4" />
                 </Link>
               </Button>
               <Button
@@ -146,7 +146,7 @@ export default function Landing() {
                 variant="secondary"
                 className="w-full border border-border/80 px-7 sm:w-auto"
               >
-                <Link to="/sell">Start selling — it&apos;s free</Link>
+                <Link to="/sell">Become a Free Seller</Link>
               </Button>
             </div>
 
@@ -405,10 +405,10 @@ export default function Landing() {
               </div>
               <div>
                 <dt className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Shop subscription
+                  Monthly fee
                 </dt>
                 <dd className="mt-1 text-sm font-semibold">
-                  $0 — no monthly charge
+                  $0 for individuals — business plans from $29/mo
                 </dd>
               </div>
               <div>
@@ -416,7 +416,7 @@ export default function Landing() {
                   Commission on sales
                 </dt>
                 <dd className="mt-1 text-sm font-semibold">
-                  0% at launch — you keep the sale price
+                  0% for individual sellers — business plans 5% / 3% / 1%
                 </dd>
               </div>
               <div>

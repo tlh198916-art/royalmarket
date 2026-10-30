@@ -327,25 +327,29 @@ export default function SellerDashboard() {
         )}
 
         <Tabs defaultValue="listings" className="mt-8">
-          <TabsList>
-            <TabsTrigger value="listings">Listings</TabsTrigger>
-            <TabsTrigger value="orders">
-              Orders
-              {stats && stats.openOrders > 0 && (
-                <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">
-                  {stats.openOrders}
-                </span>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="profile">Shop profile</TabsTrigger>
-            <TabsTrigger value="fulfillment">Fulfillment</TabsTrigger>
-            <TabsTrigger value="plan">
-              Plan &amp; earnings
-              {mySub?.status === "pending" && (
-                <span className="ml-1.5 size-1.5 rounded-full bg-amber-400" />
-              )}
-            </TabsTrigger>
-          </TabsList>
+          {/* Five tabs overflow a phone-width screen, so the strip scrolls
+              horizontally there instead of pushing the page wide. */}
+          <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+            <TabsList className="w-max">
+              <TabsTrigger value="listings">Listings</TabsTrigger>
+              <TabsTrigger value="orders">
+                Orders
+                {stats && stats.openOrders > 0 && (
+                  <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">
+                    {stats.openOrders}
+                  </span>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="profile">Shop profile</TabsTrigger>
+              <TabsTrigger value="fulfillment">Fulfillment</TabsTrigger>
+              <TabsTrigger value="plan">
+                Plan &amp; earnings
+                {mySub?.status === "pending" && (
+                  <span className="ml-1.5 size-1.5 rounded-full bg-amber-400" />
+                )}
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           {/* Listings */}
           <TabsContent value="listings" className="mt-5">

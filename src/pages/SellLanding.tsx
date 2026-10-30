@@ -305,8 +305,9 @@ export default function SellLanding() {
                 </h2>
               </div>
               <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-                Free to post is the whole price list. Everything below is what
-                you pay today — no hidden tiers, no surprise invoices.
+                Individual selling costs nothing — no listing fee, no monthly
+                fee, no commission. Business plans are optional and priced up
+                front, and nothing is billed automatically.
               </p>
             </div>
             <Button asChild>
