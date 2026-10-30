@@ -5,6 +5,7 @@ import { api } from "@/convex/_generated/api";
 import { useAuth } from "@/hooks/use-auth";
 import { eventPhase, useCountdown } from "@/hooks/use-countdown";
 import { errorMessage, pluralize } from "@/lib/format";
+import { usePageMeta } from "@/lib/seo";
 import { buildShareLinks } from "@/lib/socialShare";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -429,6 +430,12 @@ const BENEFITS = {
 
 export default function Events() {
   const { isAuthenticated } = useAuth();
+  usePageMeta({
+    title: "Founding seller events",
+    description:
+      "Live online sessions for Royalmarket sellers: listing better, pricing, fulfillment and growing a shop. Free to attend, registration required.",
+    canonicalPath: "/events",
+  });
   const eventsQuery = useQuery(api.marketEvents.list);
 
   const events = eventsQuery ?? [];

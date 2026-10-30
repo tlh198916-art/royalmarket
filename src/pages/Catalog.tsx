@@ -4,6 +4,7 @@ import { ProductCard } from "@/components/marketplace/ProductCard";
 import { SearchBar } from "@/components/marketplace/SearchBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/convex/_generated/api";
 import { CATEGORIES } from "@/convex/categories";
+import { usePageMeta } from "@/lib/seo";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { PackageX, SearchX, SlidersHorizontal, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -20,9 +22,23 @@ import { Link, useSearchParams } from "react-router";
 
 const SORT_OPTIONS = [
   { value: "newest", label: "Newest first" },
+  { value: "featured", label: "Featured first" },
   { value: "popular", label: "Most viewed" },
   { value: "price_asc", label: "Price: low to high" },
   { value: "price_desc", label: "Price: high to low" },
+] as const;
+
+const CONDITION_OPTIONS = [
+  { value: "new", label: "New" },
+  { value: "like_new", label: "Like new" },
+  { value: "good", label: "Good" },
+  { value: "fair", label: "Fair" },
+] as const;
+
+const RATING_OPTIONS = [
+  { value: "4", label: "4★ & up" },
+  { value: "3", label: "3★ & up" },
+  { value: "2", label: "2★ & up" },
 ] as const;
 
 const FULFILLMENT_OPTIONS = [
@@ -46,11 +62,37 @@ export default function Catalog() {
     ? sortParam
     : "newest";
 
+  const minParam = searchParams.get("min") ?? "";
+  const maxParam = searchParams.get("max") ?? "";
+  const ratingParam = searchParams.get("rating") ?? "";
+  const conditionParam = searchParams.get("condition") ?? "";
+  const toCents = (value: string) => {
+    const parsed = Number(value);
+    return value.trim() !== "" && Number.isFinite(parsed) && parsed >= 0
+      ? Math.round(parsed * 100)
+      : undefined;
+  };
+  const condition = CONDITION_OPTIONS.some((o) => o.value === conditionParam)
+    ? (conditionParam as "new" | "like_new" | "good" | "fair")
+    : undefined;
+  const minRating = RATING_OPTIONS.some((o) => o.value === ratingParam)
+    ? Number(ratingParam)
+    : undefined;
+
   const products = useQuery(api.products.list, {
     q: q || undefined,
     categoryId: category || undefined,
-    sortBy: sort as "newest" | "popular" | "price_asc" | "price_desc",
+    sortBy: sort as
+      | "newest"
+      | "featured"
+      | "popular"
+      | "price_asc"
+      | "price_desc",
     fulfillment,
+    minPriceCents: toCents(minParam),
+    maxPriceCents: toCents(maxParam),
+    minRating,
+    condition,
     limit: 60,
   });
 
@@ -126,7 +168,20 @@ export default function Catalog() {
   };
 
   const activeCategory = CATEGORIES.find((c) => c.id === category);
-  const hasFilters = Boolean(q || category || fulfillment);
+  const hasFilters = Boolean(
+    q || category || fulfillment || minParam || maxParam || ratingParam || conditionParam,
+  );
+  usePageMeta({
+    title: activeCategory
+      ? `${activeCategory.label} listings`
+      : q
+        ? `Search: ${q}`
+        : "Browse marketplace listings",
+    description: activeCategory
+      ? `Shop ${activeCategory.label} from verified Royalmarket sellers. Filter by price, condition, rating and fulfillment.`
+      : "Browse live marketplace listings from verified sellers. Filter by category, price, condition, rating and fulfillment.",
+    canonicalPath: "/products",
+  });
   const isFilteredOut = merged !== undefined && merged.length === 0 && hasFilters;
 
   return (
@@ -221,6 +276,95 @@ export default function Catalog() {
                 {option.label}
               </button>
             ))}
+          </div>
+
+          {/* Price, rating and condition filters */}
+          <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-border/70 bg-card/50 p-3">
+            <div className="flex items-end gap-1.5">
+              <div>
+                <label
+                  htmlFor="min-price"
+                  className="text-[11px] font-medium text-muted-foreground"
+                >
+                  Min $
+                </label>
+                <Input
+                  id="min-price"
+                  inputMode="decimal"
+                  type="number"
+                  min={0}
+                  placeholder="0"
+                  defaultValue={minParam}
+                  className="mt-1 h-9 w-24 text-sm"
+                  onBlur={(event) => updateParam("min", event.target.value || null)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter")
+                      updateParam("min", event.currentTarget.value || null);
+                  }}
+                />
+              </div>
+              <span className="pb-2.5 text-xs text-muted-foreground">–</span>
+              <div>
+                <label
+                  htmlFor="max-price"
+                  className="text-[11px] font-medium text-muted-foreground"
+                >
+                  Max $
+                </label>
+                <Input
+                  id="max-price"
+                  inputMode="decimal"
+                  type="number"
+                  min={0}
+                  placeholder="Any"
+                  defaultValue={maxParam}
+                  className="mt-1 h-9 w-24 text-sm"
+                  onBlur={(event) => updateParam("max", event.target.value || null)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter")
+                      updateParam("max", event.currentTarget.value || null);
+                  }}
+                />
+              </div>
+            </div>
+
+            <Select
+              value={ratingParam || "any"}
+              onValueChange={(value) =>
+                updateParam("rating", value === "any" ? null : value)
+              }
+            >
+              <SelectTrigger className="h-9 w-[130px] text-sm">
+                <SelectValue placeholder="Rating" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="any">Any rating</SelectItem>
+                {RATING_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={conditionParam || "any"}
+              onValueChange={(value) =>
+                updateParam("condition", value === "any" ? null : value)
+              }
+            >
+              <SelectTrigger className="h-9 w-[145px] text-sm">
+                <SelectValue placeholder="Condition" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="any">Any condition</SelectItem>
+                {CONDITION_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Sort + clear */}

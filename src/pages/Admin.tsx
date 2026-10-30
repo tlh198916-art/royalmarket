@@ -13,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/convex/_generated/api";
+import { REPORT_REASONS } from "@/convex/reportReasons";
 import { formatDateTime, formatPrice, timeAgo } from "@/lib/format";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
@@ -20,6 +21,8 @@ import {
   BadgeCheck,
   Banknote,
   Eye,
+  Flag,
+  Gift,
   Loader2,
   PackageCheck,
   Pencil,
@@ -90,6 +93,8 @@ export default function Admin() {
   const claimAdmin = useMutation(api.admin.claimAdmin);
   const setProductStatus = useMutation(api.admin.setProductStatus);
   const setUserRole = useMutation(api.admin.setUserRole);
+  const setFeatured = useMutation(api.admin.setFeatured);
+  const resolveReport = useMutation(api.reports.resolve);
   const closeTicket = useMutation(api.account.closeTicket);
 
   const isAdmin = status?.isAdmin ?? false;
@@ -103,6 +108,48 @@ export default function Admin() {
     isAdmin ? { limit: 50 } : "skip",
   );
   const tickets = useQuery(api.account.listTickets, isAdmin ? {} : "skip");
+  const reports = useQuery(api.reports.adminList, isAdmin ? {} : "skip");
+  const referrals = useQuery(
+    api.admin.referralOverview,
+    isAdmin ? {} : "skip",
+  );
+
+  const handleFeature = async (productId: string, featured: boolean) => {
+    try {
+      await setFeatured({ productId: productId as never, featured });
+      toast.success(
+        featured
+          ? "Featured on the homepage and in featured sorting."
+          : "Removed from featured placement.",
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not update featured.",
+      );
+    }
+  };
+
+  const handleResolveReport = async (
+    reportId: string,
+    outcome: "resolved" | "dismissed",
+  ) => {
+    try {
+      await resolveReport({
+        reportId: reportId as never,
+        outcome,
+        removeListing: outcome === "resolved",
+      });
+      toast.success(
+        outcome === "resolved"
+          ? "Report resolved and listing taken down."
+          : "Report dismissed.",
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not update the report.",
+      );
+    }
+  };
 
   const handleClaim = async () => {
     setClaiming(true);
@@ -548,7 +595,22 @@ export default function Admin() {
                       {product.quantity}
                     </TableCell>
                     <TableCell>
-                      <div className="flex justify-end gap-1.5">
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        {product.status === "active" && (
+                          <Button
+                            size="sm"
+                            variant={product.featuredAt ? "default" : "outline"}
+                            onClick={() =>
+                              void handleFeature(
+                                product._id,
+                                !product.featuredAt,
+                              )
+                            }
+                          >
+                            <Sparkles className="size-3.5" />
+                            {product.featuredAt ? "Featured" : "Feature"}
+                          </Button>
+                        )}
                         {product.status !== "active" && (
                           <Button
                             size="sm"
@@ -577,6 +639,149 @@ export default function Admin() {
                 ))}
               </TableBody>
             </Table>
+          )}
+        </section>
+
+        {/* Buyer reports */}
+        <section className="mt-6 rounded-2xl border border-border/70 bg-card">
+          <div className="flex items-center gap-2 border-b border-border/70 px-5 py-4">
+            <Flag className="size-4 text-primary" />
+            <h2 className="text-sm font-bold tracking-tight">
+              Reported listings
+            </h2>
+            <span className="ml-auto text-xs text-muted-foreground">
+              {reports?.length ?? 0} open
+            </span>
+          </div>
+          {reports === undefined ? (
+            <p className="px-5 py-6 text-sm text-muted-foreground">Loading…</p>
+          ) : reports.length === 0 ? (
+            <p className="px-5 py-6 text-sm text-muted-foreground">
+              No open reports. Buyer reports land here for review.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Listing</TableHead>
+                  <TableHead>Seller</TableHead>
+                  <TableHead>Reason</TableHead>
+                  <TableHead>Reported</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {reports.map((report) => (
+                  <TableRow key={report._id}>
+                    <TableCell className="max-w-[220px]">
+                      <Link
+                        to={`/products/${report.productId}`}
+                        className="line-clamp-1 text-sm hover:text-primary"
+                      >
+                        {report.productTitle}
+                      </Link>
+                      {report.details && (
+                        <p className="line-clamp-2 text-xs text-muted-foreground">
+                          “{report.details}”
+                        </p>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {report.sellerName}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {REPORT_REASONS.find(
+                        (reason) => reason.value === report.reason,
+                      )?.label ?? report.reason}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {timeAgo(report.createdAt)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            void handleResolveReport(report._id, "dismissed")
+                          }
+                        >
+                          Dismiss
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            void handleResolveReport(report._id, "resolved")
+                          }
+                        >
+                          Resolve &amp; remove
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </section>
+
+        {/* Referral program */}
+        <section className="mt-6 rounded-2xl border border-border/70 bg-card">
+          <div className="flex items-center gap-2 border-b border-border/70 px-5 py-4">
+            <Gift className="size-4 text-primary" />
+            <h2 className="text-sm font-bold tracking-tight">
+              Seller referrals
+            </h2>
+          </div>
+          {referrals === undefined ? (
+            <p className="px-5 py-6 text-sm text-muted-foreground">Loading…</p>
+          ) : (
+            <div className="p-5">
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[
+                  { label: "Total referrals", value: referrals.total },
+                  { label: "Inviting sellers", value: referrals.inviters },
+                  { label: "Last 30 days", value: referrals.last30Days },
+                ].map((stat) => (
+                  <div
+                    key={stat.label}
+                    className="rounded-xl border border-border/70 bg-background/40 px-4 py-3"
+                  >
+                    <p className="text-lg font-bold">{stat.value}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {stat.label}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {referrals.topInviters.length > 0 ? (
+                <ul className="mt-4 divide-y divide-border/70 text-sm">
+                  {referrals.topInviters.map((inviter) => (
+                    <li
+                      key={inviter.sellerId}
+                      className="flex items-center justify-between gap-3 py-2.5"
+                    >
+                      <span className="min-w-0 truncate">
+                        {inviter.name}
+                        {inviter.email && (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {inviter.email}
+                          </span>
+                        )}
+                      </span>
+                      <span className="shrink-0 text-xs font-semibold">
+                        {inviter.count} invited
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-4 text-sm text-muted-foreground">
+                  No referrals recorded yet. Sellers share links from their
+                  dashboard's "Refer sellers" tab.
+                </p>
+              )}
+            </div>
           )}
         </section>
 

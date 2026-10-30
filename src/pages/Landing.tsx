@@ -9,6 +9,7 @@ import { CATEGORIES } from "@/convex/categories";
 import { useAuth } from "@/hooks/use-auth";
 import { formatPrice } from "@/lib/format";
 import { getRecentViews } from "@/lib/recentlyViewed";
+import { usePageMeta } from "@/lib/seo";
 import { useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
@@ -91,7 +92,17 @@ const trustPoints = [
 
 export default function Landing() {
   const { user, isLoading } = useAuth();
-  const featured = useQuery(api.products.list, { sortBy: "popular", limit: 4 });
+  usePageMeta({
+    title: "Buy & sell with verified sellers",
+    description:
+      "Royalmarket is a multi-vendor marketplace with verified sellers, free individual listings, and transparent pay-on-delivery checkout.",
+    canonicalPath: "/",
+  });
+  // Admin-curated featured picks first; fall back to most-viewed real listings.
+  const curated = useQuery(api.products.list, { featuredOnly: true, limit: 4 });
+  const popular = useQuery(api.products.list, { sortBy: "popular", limit: 4 });
+  const featured =
+    curated === undefined ? undefined : curated.length > 0 ? curated : popular;
   const recentlyAdded = useQuery(api.products.list, { sortBy: "newest", limit: 8 });
 
   const recentIds = useMemo(() => getRecentViews(), []);

@@ -1,6 +1,37 @@
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { requireVerifiedUser } from "./lib";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
+
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+/** Short, human-readable share code for the referral program. */
+function newReferralCode(): string {
+  let code = "";
+  for (let i = 0; i < 6; i++) {
+    code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+  }
+  return code;
+}
+
+/** Generates a code that no other account holds yet. */
+export async function ensureReferralCode(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+): Promise<string> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = newReferralCode();
+    const taken = await ctx.db
+      .query("users")
+      .withIndex("by_referral_code", (s) => s.eq("referralCode", code))
+      .first();
+    if (!taken) {
+      await ctx.db.patch(userId, { referralCode: code });
+      return code;
+    }
+  }
+  throw new Error("Could not create a referral code. Please try again.");
+}
 
 const defaultFulfillmentArgs = v.object({
   pickup: v.object({
@@ -36,6 +67,8 @@ export const become = mutation({
     bio: v.optional(v.string()),
     location: v.optional(v.string()),
     sellerType: v.optional(v.literal("individual")),
+    // Optional share code from the seller who invited this person.
+    referralCode: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const user = await requireVerifiedUser(ctx);
@@ -47,6 +80,31 @@ export const become = mutation({
     const bio = args.bio?.trim().slice(0, 500) || undefined;
     const location = args.location?.trim().slice(0, 80) || undefined;
 
+    // Referral attribution. Unknown codes are ignored rather than blocking
+    // onboarding — the shop is what matters, the invite is a bonus.
+    let inviterId = user.referredBySellerId;
+    const rawCode = args.referralCode?.trim().toUpperCase().slice(0, 12);
+    if (rawCode && !inviterId) {
+      const inviter = await ctx.db
+        .query("users")
+        .withIndex("by_referral_code", (s) => s.eq("referralCode", rawCode))
+        .first();
+      if (inviter && inviter._id !== user._id && inviter.isSeller) {
+        const alreadyReferred = await ctx.db
+          .query("referrals")
+          .withIndex("by_invitee", (s) => s.eq("inviteeId", user._id))
+          .first();
+        if (!alreadyReferred) {
+          await ctx.db.insert("referrals", {
+            inviterId: inviter._id,
+            inviteeId: user._id,
+            code: rawCode,
+          });
+          inviterId = inviter._id;
+        }
+      }
+    }
+
     // A public onboarding call can only establish a free individual shop.
     // Paid business identity is assigned by the subscription flow.
     await ctx.db.patch(user._id, {
@@ -57,7 +115,10 @@ export const become = mutation({
       // Do not allow client-supplied sellerType to unlock business features.
       sellerType: user.sellerType === "business" ? "business" : "individual",
       name: user.name ?? shopName,
+      referredBySellerId: inviterId,
     });
+
+    if (!user.referralCode) await ensureReferralCode(ctx, user._id);
     return true;
   },
 });
@@ -239,6 +300,22 @@ export const publicProfile = query({
 
     let ratingSum = 0;
     let ratingCount = 0;
+    const breakdown: Record<"1" | "2" | "3" | "4" | "5", number> = {
+      "1": 0,
+      "2": 0,
+      "3": 0,
+      "4": 0,
+      "5": 0,
+    };
+    const allReviews: {
+      productId: string;
+      productTitle: string;
+      rating: number;
+      comment: string;
+      verifiedPurchase: boolean;
+      reviewerId: string;
+      createdAt: number;
+    }[] = [];
     for (const product of active) {
       const reviews = await ctx.db
         .query("reviews")
@@ -247,8 +324,47 @@ export const publicProfile = query({
       for (const review of reviews) {
         ratingSum += review.rating;
         ratingCount += 1;
+        const key = String(Math.min(5, Math.max(1, review.rating))) as
+          | "1"
+          | "2"
+          | "3"
+          | "4"
+          | "5";
+        breakdown[key] += 1;
+        allReviews.push({
+          productId: product._id,
+          productTitle: product.title,
+          rating: review.rating,
+          comment: review.comment,
+          verifiedPurchase: review.verifiedPurchase,
+          reviewerId: review.reviewerId,
+          createdAt: review._creationTime,
+        });
       }
     }
+
+    // Storefront review list: newest few, with reviewer display names.
+    const recentReviews = await Promise.all(
+      allReviews
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, 6)
+        .map(async ({ reviewerId, ...entry }) => {
+          const reviewer = await ctx.db.get(reviewerId as Id<"users">);
+          return {
+            ...entry,
+            reviewerName:
+              reviewer?.name ?? reviewer?.shopName ?? "Verified buyer",
+          };
+        }),
+    );
+
+    const deliveredItems = await ctx.db
+      .query("orderItems")
+      .withIndex("by_seller", (s) => s.eq("sellerId", sellerId))
+      .take(500);
+    const completedSales = deliveredItems.filter(
+      (item) => item.status === "delivered",
+    ).length;
 
     return {
       id: sellerId,
@@ -262,6 +378,12 @@ export const publicProfile = query({
       totalListings: products.length,
       ratingCount,
       averageRating: ratingCount === 0 ? null : ratingSum / ratingCount,
+      ratingBreakdown: breakdown,
+      recentReviews,
+      completedSales,
+      verifiedSeller:
+        !!seller.emailVerificationTime && !seller.isAnonymous,
+      referralCode: seller.referralCode ?? null,
       sellerType: seller.sellerType ?? "individual",
       businessContact: seller.businessContact ?? null,
       businessLogoUrl: seller.businessLogoStorageId

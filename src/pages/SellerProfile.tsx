@@ -5,6 +5,7 @@ import { StarRating } from "@/components/marketplace/StarRating";
 import { Button } from "@/components/ui/button";
 import { api } from "@/convex/_generated/api";
 import { formatDate, initials, pluralize } from "@/lib/format";
+import { usePageMeta } from "@/lib/seo";
 import { useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import { ArrowLeft, MapPin, PackageSearch, Store } from "lucide-react";
@@ -14,6 +15,14 @@ export default function SellerProfile() {
   const { userId = "" } = useParams();
   const profile = useQuery(api.sellers.publicProfile, { sellerId: userId });
   const listings = useQuery(api.products.list, { sellerId: userId, limit: 24 });
+
+  usePageMeta({
+    title: profile ? `${profile.shopName ?? profile.name} — seller storefront` : "Seller storefront",
+    description: profile
+      ? `Shop ${profile.activeListings} live listing${profile.activeListings === 1 ? "" : "s"} from ${profile.shopName ?? profile.name}${profile.averageRating ? `, rated ${profile.averageRating.toFixed(1)}/5` : ""}. Verified Royalmarket seller.`
+      : undefined,
+    canonicalPath: `/sellers/${userId}`,
+  });
 
   if (profile === undefined) {
     return (
@@ -83,9 +92,11 @@ export default function SellerProfile() {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-bold tracking-tight">{shopName}</h1>
-                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
-                  Verified account
-                </span>
+                {profile.verifiedSeller && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-400">
+                    Verified seller
+                  </span>
+                )}
                 {profile.sellerType === "business" && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-[11px] font-semibold">
                     Business storefront
@@ -118,7 +129,7 @@ export default function SellerProfile() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3 sm:w-auto">
+            <div className="grid grid-cols-2 gap-3 sm:w-auto sm:grid-cols-4">
               <div className="rounded-xl border border-border/70 bg-background/50 px-4 py-3 text-center">
                 <p className="text-lg font-bold">{profile.activeListings}</p>
                 <p className="text-[11px] text-muted-foreground">Live items</p>
@@ -128,6 +139,10 @@ export default function SellerProfile() {
                 <p className="text-[11px] text-muted-foreground">
                   {pluralize(profile.ratingCount, "review")}
                 </p>
+              </div>
+              <div className="rounded-xl border border-border/70 bg-background/50 px-4 py-3 text-center">
+                <p className="text-lg font-bold">{profile.completedSales}</p>
+                <p className="text-[11px] text-muted-foreground">Sales completed</p>
               </div>
               <div className="rounded-xl border border-border/70 bg-background/50 px-4 py-3 text-center">
                 <p className="text-lg font-bold">{profile.totalListings}</p>
@@ -178,6 +193,94 @@ export default function SellerProfile() {
             )}
           </div>
         </div>
+
+        {/* Reviews from this seller's buyers */}
+        <section className="mt-12 rounded-3xl border border-border/70 bg-card/60 p-6 sm:p-8">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-bold tracking-tight">
+                Buyer reviews
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {profile.ratingCount === 0
+                  ? "No reviews yet — reviews come from real buyers only."
+                  : `${profile.ratingCount} verified review${profile.ratingCount === 1 ? "" : "s"} across this shop's listings.`}
+              </p>
+            </div>
+            {profile.averageRating !== null && (
+              <div className="flex items-center gap-3">
+                <p className="text-3xl font-extrabold tracking-tight">
+                  {profile.averageRating.toFixed(1)}
+                </p>
+                <div>
+                  <StarRating value={profile.averageRating} size="md" />
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    out of 5
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {profile.ratingCount > 0 && (
+            <div className="mt-6 grid gap-6 lg:grid-cols-[220px_1fr]">
+              <div className="space-y-1.5">
+                {([5, 4, 3, 2, 1] as const).map((star) => {
+                  const value =
+                    profile.ratingBreakdown[
+                      String(star) as "1" | "2" | "3" | "4" | "5"
+                    ];
+                  const pct =
+                    profile.ratingCount === 0
+                      ? 0
+                      : Math.round((value / profile.ratingCount) * 100);
+                  return (
+                    <div key={star} className="flex items-center gap-2 text-xs">
+                      <span className="w-7 text-muted-foreground">{star}★</span>
+                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+                        <span
+                          className="block h-full rounded-full bg-amber-400"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </span>
+                      <span className="w-6 text-right text-muted-foreground">
+                        {value}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="space-y-3">
+                {profile.recentReviews.map((review, index) => (
+                  <div
+                    key={`${review.productId}-${index}`}
+                    className="rounded-2xl border border-border/70 bg-background/40 p-4"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <StarRating value={review.rating} />
+                      <span className="text-[11px] text-muted-foreground">
+                        {formatDate(review.createdAt)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm leading-6">{review.comment}</p>
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      {review.reviewerName}
+                      {review.verifiedPurchase ? " · verified purchase" : ""}
+                      {" · on "}
+                      <Link
+                        to={`/products/${review.productId}`}
+                        className="hover:text-primary"
+                      >
+                        {review.productTitle}
+                      </Link>
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
 
         <Link
           to="/products"

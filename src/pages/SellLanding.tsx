@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { formatPrice } from "@/lib/format";
+import { usePageMeta } from "@/lib/seo";
 import {
   ArrowRight,
   BadgeDollarSign,
@@ -19,7 +20,8 @@ import {
   Store,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import { Link } from "react-router";
+import { useEffect } from "react";
+import { Link, useSearchParams } from "react-router";
 
 const fadeUp = {
   initial: { opacity: 0, y: 22 },
@@ -95,6 +97,29 @@ const faqs = [
 
 export default function SellLanding() {
   const { user, isAuthenticated, isLoading } = useAuth();
+  const [searchParams] = useSearchParams();
+  const referralCode = (searchParams.get("ref") ?? "")
+    .trim()
+    .toUpperCase()
+    .slice(0, 12);
+
+  // Persist the invite through the sign-in round trip; the shop-setup step
+  // credits it once the account opens its storefront.
+  useEffect(() => {
+    if (!referralCode) return;
+    try {
+      window.sessionStorage.setItem("royalmarket.ref", referralCode);
+    } catch {
+      // storage unavailable — invite simply won't be attributed
+    }
+  }, [referralCode]);
+
+  usePageMeta({
+    title: "Sell on Royalmarket — free individual seller accounts",
+    description:
+      "Open a free seller shop, list items with photos and live inventory, and manage orders from one dashboard. Optional business plans from $29/month.",
+    canonicalPath: "/sell",
+  });
 
   const ctaHref = isAuthenticated ? "/sell/new" : "/auth?returnTo=%2Fsell%2Fnew";
 
@@ -125,6 +150,12 @@ export default function SellLanding() {
               minutes, publish listings with photos and live inventory, and
               manage every order from one dashboard.
             </p>
+            {referralCode && (
+              <p className="mx-auto mt-4 inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
+                <Handshake className="size-3.5" /> Invited by a fellow seller —
+                invite code {referralCode}
+              </p>
+            )}
             <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Button asChild size="lg" className="w-full px-7 sm:w-auto">
                 <Link to={ctaHref}>

@@ -121,6 +121,13 @@ export const create = mutation({
       comment,
       verifiedPurchase: verified,
     });
+
+    // Keep the listing's denormalized aggregates in sync so catalog rating
+    // filters and product cards never need to scan every review.
+    await ctx.db.patch(product._id, {
+      ratingSum: (product.ratingSum ?? 0) + rating,
+      ratingCount: (product.ratingCount ?? 0) + 1,
+    });
     return true;
   },
 });

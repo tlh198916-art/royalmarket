@@ -10,6 +10,8 @@ export type SellerInfo = {
   isSeller?: boolean;
   joinedAt?: number;
   image?: string | null;
+  sellerType?: "individual" | "business";
+  verifiedSeller?: boolean;
 } | null;
 
 /** Loose structural shape shared by catalog cards, detail views, cart rows. */
@@ -31,4 +33,9 @@ export type ProductCardData = {
   condition?: string;
   returns?: { accepted: boolean; days: number };
   _creationTime?: number;
+  /** Average product rating (null until the first review). */
+  ratingAverage?: number | null;
+  ratingCount?: number;
+  /** Admin-curated featured placement. */
+  featured?: boolean;
 };

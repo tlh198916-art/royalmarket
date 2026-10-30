@@ -1,5 +1,6 @@
 import { EmptyState } from "@/components/marketplace/EmptyState";
 import { Layout } from "@/components/marketplace/Layout";
+import { OrderMessages } from "@/components/marketplace/OrderMessages";
 import { ProductMedia } from "@/components/marketplace/ProductMedia";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -465,6 +466,8 @@ export default function Orders() {
                           </Button>
                         )}
                       </div>
+
+                      <OrderMessages orderId={order._id} />
                     </div>
                   </div>
                 );

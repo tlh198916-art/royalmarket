@@ -4,6 +4,7 @@ import {
   type FulfillmentSettings,
 } from "@/components/marketplace/FulfillmentEditor";
 import { Layout } from "@/components/marketplace/Layout";
+import { OrderMessages } from "@/components/marketplace/OrderMessages";
 import { ProductMedia } from "@/components/marketplace/ProductMedia";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,9 @@ import { useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
   CheckCircle2,
+  Copy,
   Eye,
+  Gift,
   Handshake,
   Package,
   PackageCheck,
@@ -134,6 +137,9 @@ export default function SellerDashboard() {
 
   const mySub = useQuery(api.subscriptions.mine);
   const myLedger = useQuery(api.commissions.myLedger);
+  const myReferrals = useQuery(api.referrals.myReferrals);
+  const ensureReferralCode = useMutation(api.referrals.ensureCode);
+  const [creatingCode, setCreatingCode] = useState(false);
   const saveFulfillmentDefaults = useMutation(api.sellers.setFulfillmentDefaults);
   const [fulfillmentDefaults, setFulfillmentDefaults] =
     useState<FulfillmentSettings | null>(null);
@@ -240,6 +246,35 @@ export default function SellerDashboard() {
     }
   };
 
+  const handleCreateCode = async () => {
+    setCreatingCode(true);
+    try {
+      await ensureReferralCode({});
+      toast.success("Your invite code is ready to share.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not create a code.",
+      );
+    } finally {
+      setCreatingCode(false);
+    }
+  };
+
+  const referralLink =
+    myReferrals?.code && typeof window !== "undefined"
+      ? `${window.location.origin}/sell?ref=${myReferrals.code}`
+      : null;
+
+  const handleCopyReferral = async () => {
+    if (!referralLink) return;
+    try {
+      await navigator.clipboard.writeText(referralLink);
+      toast.success("Invite link copied.");
+    } catch {
+      toast.error("Copy failed — select the link and copy it manually.");
+    }
+  };
+
   if (authLoading || listings === undefined) {
     return (
       <Layout>
@@ -327,7 +362,7 @@ export default function SellerDashboard() {
         )}
 
         <Tabs defaultValue="listings" className="mt-8">
-          {/* Five tabs overflow a phone-width screen, so the strip scrolls
+          {/* Six tabs overflow a phone-width screen, so the strip scrolls
               horizontally there instead of pushing the page wide. */}
           <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
             <TabsList className="w-max">
@@ -348,6 +383,7 @@ export default function SellerDashboard() {
                   <span className="ml-1.5 size-1.5 rounded-full bg-amber-400" />
                 )}
               </TabsTrigger>
+              <TabsTrigger value="referrals">Refer sellers</TabsTrigger>
             </TabsList>
           </div>
 
@@ -824,6 +860,7 @@ export default function SellerDashboard() {
                           </div>
                         )}
                     </div>
+                    <OrderMessages orderId={order._id} />
                   </div>
                   );
                 })}
@@ -1115,6 +1152,107 @@ export default function SellerDashboard() {
                       </div>
                     ))}
                   </div>
+                )}
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* Referral program */}
+          <TabsContent value="referrals" className="mt-5">
+            <div className="max-w-3xl space-y-5">
+              <div className="rounded-2xl border border-border/70 bg-card p-6">
+                <div className="flex items-center gap-2">
+                  <Gift className="size-5 text-primary" />
+                  <h2 className="text-base font-bold tracking-tight">
+                    Invite another seller
+                  </h2>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  Share your link with someone ready to open a shop. Their
+                  account is credited to you when they finish shop setup, and
+                  your invite count appears here. This is a recognition
+                  program — no cash payouts are promised or calculated.
+                </p>
+
+                {myReferrals === undefined ? (
+                  <div className="mt-5 h-10 w-56 animate-pulse rounded-lg bg-secondary/60" />
+                ) : myReferrals?.code ? (
+                  <div className="mt-5 space-y-3">
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        readOnly
+                        value={referralLink ?? ""}
+                        aria-label="Your seller invite link"
+                        className="font-mono text-xs"
+                        onFocus={(event) => event.currentTarget.select()}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void handleCopyReferral()}
+                      >
+                        <Copy className="mr-1.5 size-4" /> Copy link
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Your code:{" "}
+                      <span className="font-mono font-semibold text-foreground">
+                        {myReferrals.code}
+                      </span>{" "}
+                      · {myReferrals.inviteCount} invited ·{" "}
+                      {myReferrals.activeInvitees} still selling
+                    </p>
+                  </div>
+                ) : (
+                  <Button
+                    className="mt-5"
+                    onClick={() => void handleCreateCode()}
+                    disabled={creatingCode}
+                  >
+                    {creatingCode ? "Creating…" : "Create my invite code"}
+                  </Button>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-border/70 bg-card p-6">
+                <h2 className="text-base font-bold tracking-tight">
+                  Your invites
+                </h2>
+                {myReferrals && myReferrals.invites.length > 0 ? (
+                  <ul className="mt-4 divide-y divide-border/70">
+                    {myReferrals.invites.map((invite) => (
+                      <li
+                        key={invite._id}
+                        className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">
+                            {invite.shopName ?? invite.name ?? "New seller"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            Joined {formatDate(invite.joinedAt)} ·{" "}
+                            {invite.listings} live listing
+                            {invite.listings === 1 ? "" : "s"}
+                          </span>
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={
+                            invite.stillSelling
+                              ? "border-emerald-400/40 text-emerald-400"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {invite.stillSelling ? "Selling" : "Inactive"}
+                        </Badge>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    No invites yet. When someone opens a shop with your link,
+                    they show up here.
+                  </p>
                 )}
               </div>
             </div>

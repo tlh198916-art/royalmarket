@@ -225,7 +225,20 @@ function ListingFormInner({ editId }: { editId: string | null }) {
       if (user?.isSeller) {
         await updateProfile({ shopName, bio, location });
       } else {
-        await becomeSeller({ shopName, bio, location });
+        // Carry the invite code from /sell?ref=CODE through sign-in.
+        let referralCode: string | undefined;
+        try {
+          referralCode =
+            window.sessionStorage.getItem("royalmarket.ref") ?? undefined;
+        } catch {
+          referralCode = undefined;
+        }
+        await becomeSeller({ shopName, bio, location, referralCode });
+        try {
+          window.sessionStorage.removeItem("royalmarket.ref");
+        } catch {
+          // storage unavailable — nothing to clear
+        }
       }
       setShopStep(false);
       toast.success("Shop profile saved — now create your listing.");

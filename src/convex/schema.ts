@@ -140,10 +140,15 @@ const schema = defineSchema(
       storefrontSlug: v.optional(v.string()),
       // Seller-level fulfillment defaults, prefilled into new listings.
       defaultFulfillment: v.optional(productFulfillmentValidator),
+      // Seller-to-seller referral program. Every seller gets a shareable code;
+      // attribution is recorded once, when a referred account opens its shop.
+      referralCode: v.optional(v.string()),
+      referredBySellerId: v.optional(v.id("users")),
     })
       .index("email", ["email"])
       .index("by_role", ["role"])
-      .index("by_storefront_slug", ["storefrontSlug"]),
+      .index("by_storefront_slug", ["storefrontSlug"])
+      .index("by_referral_code", ["referralCode"]),
 
     products: defineTable({
       sellerId: v.id("users"),
@@ -162,6 +167,12 @@ const schema = defineSchema(
       views: v.number(),
       soldCount: v.number(),
       moderatorNote: v.optional(v.string()),
+      // Admin-curated featured placement (homepage + "featured first" sort).
+      featuredAt: v.optional(v.number()),
+      // Denormalized review aggregates, maintained on review creation so the
+      // catalog can rate-filter and sort without per-product review scans.
+      ratingSum: v.optional(v.number()),
+      ratingCount: v.optional(v.number()),
       // AI semantic-search embedding (768-dim Gemini); optional until indexed.
       embedding: v.optional(v.array(v.float64())),
       // Seller-configured fulfillment: pickup, seller shipping, local delivery.
@@ -202,6 +213,51 @@ const schema = defineSchema(
     })
       .index("by_user", ["userId"])
       .index("by_user_product", ["userId", "productId"]),
+
+    /**
+     * Seller-to-seller referrals: one row per referred account. Purely
+     * attribution/recognition — no payouts are computed from this table.
+     */
+    referrals: defineTable({
+      inviterId: v.id("users"),
+      inviteeId: v.id("users"),
+      code: v.string(),
+    })
+      .index("by_inviter", ["inviterId"])
+      .index("by_invitee", ["inviteeId"]),
+
+    /** Buyer reports on listings, reviewed by moderators. */
+    reports: defineTable({
+      productId: v.id("products"),
+      reporterId: v.id("users"),
+      reason: v.union(
+        v.literal("prohibited"),
+        v.literal("misleading"),
+        v.literal("counterfeit"),
+        v.literal("spam"),
+        v.literal("other"),
+      ),
+      details: v.optional(v.string()),
+      status: v.union(
+        v.literal("open"),
+        v.literal("resolved"),
+        v.literal("dismissed"),
+      ),
+      createdAt: v.number(),
+      resolvedAt: v.optional(v.number()),
+      resolvedBy: v.optional(v.id("users")),
+      resolutionNote: v.optional(v.string()),
+    })
+      .index("by_product", ["productId"])
+      .index("by_status", ["status"])
+      .index("by_reporter", ["reporterId"]),
+
+    /** Buyer ↔ seller messages scoped to one order. */
+    orderMessages: defineTable({
+      orderId: v.id("orders"),
+      senderId: v.id("users"),
+      body: v.string(),
+    }).index("by_order", ["orderId"]),
 
     orders: defineTable({
       buyerId: v.id("users"),

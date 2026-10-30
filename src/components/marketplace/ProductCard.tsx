@@ -5,6 +5,7 @@ import { CATEGORIES } from "@/convex/categories";
 import { formatPrice } from "@/lib/format";
 import type { ProductCardData } from "@/lib/types";
 import { motion } from "framer-motion";
+import { Sparkles, Star } from "lucide-react";
 import { Link } from "react-router";
 
 // Snapshot of load time so the "Just listed" badge doesn't call impure
@@ -60,6 +61,11 @@ export function ProductCard({
             Just listed
           </span>
         )}
+        {product.featured && (
+          <span className="absolute bottom-3 left-3 inline-flex items-center gap-1 rounded-lg bg-amber-400/95 px-2 py-1 text-[11px] font-bold text-amber-950">
+            <Sparkles className="size-3" /> Featured
+          </span>
+        )}
       </Link>
 
       <FavoriteButton
@@ -79,6 +85,17 @@ export function ProductCard({
         >
           {product.title}
         </Link>
+
+        {(product.ratingCount ?? 0) > 0 && product.ratingAverage != null && (
+          <p
+            className="flex items-center gap-1 text-xs text-muted-foreground"
+            aria-label={`Rated ${product.ratingAverage.toFixed(1)} out of 5 from ${product.ratingCount} reviews`}
+          >
+            <Star className="size-3 fill-amber-400 text-amber-400" />
+            {product.ratingAverage.toFixed(1)}
+            <span className="text-[11px]">({product.ratingCount})</span>
+          </p>
+        )}
 
         <div className="mt-auto flex items-end justify-between gap-2 pt-2">
           <div>

@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { ADMIN_EMAIL, isAdminEmail, isRetiredAdminEmail } from "./adminConfig";
 import { requireAdmin, requireUser } from "./lib";
 import { internalMutation, mutation, query } from "./_generated/server";
@@ -330,6 +330,57 @@ export const listUsers = query({
       verified: !!u.emailVerificationTime && !u.isAnonymous,
       createdAt: u._creationTime,
     }));
+  },
+});
+
+/** Curate featured listings: homepage picks + "featured first" sorting. */
+export const setFeatured = mutation({
+  args: { productId: v.id("products"), featured: v.boolean() },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+    const product = await ctx.db.get(args.productId);
+    if (!product) throw new Error("Listing not found.");
+    if (args.featured && product.status !== "active")
+      throw new Error("Only live listings can be featured.");
+    await ctx.db.patch(args.productId, {
+      featuredAt: args.featured ? Date.now() : undefined,
+    });
+    return true;
+  },
+});
+
+/** Referral program overview for the admin dashboard. */
+export const referralOverview = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    const rows = await ctx.db.query("referrals").collect();
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      counts.set(row.inviterId, (counts.get(row.inviterId) ?? 0) + 1);
+    }
+    const topInviters = await Promise.all(
+      [...counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(async ([sellerId, count]) => {
+          const seller = await ctx.db.get(sellerId as Id<"users">);
+          return {
+            sellerId,
+            name: seller?.shopName ?? seller?.name ?? "Seller",
+            email: seller?.email ?? null,
+            count,
+          };
+        }),
+    );
+    return {
+      total: rows.length,
+      inviters: counts.size,
+      last30Days: rows.filter(
+        (row) => row._creationTime >= Date.now() - 30 * DAY,
+      ).length,
+      topInviters,
+    };
   },
 });
 

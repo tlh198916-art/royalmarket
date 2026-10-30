@@ -13,6 +13,7 @@ import { api } from "@/convex/_generated/api";
 import { bpsToPercent, commissionCents } from "@/convex/plans";
 import { useAuth } from "@/hooks/use-auth";
 import { formatPrice } from "@/lib/format";
+import { usePageMeta } from "@/lib/seo";
 import { useQuery } from "convex/react";
 import {
   ArrowRight,
@@ -72,6 +73,12 @@ function Cell({ value }: { value: string }) {
 
 export default function Pricing() {
   const { isAuthenticated } = useAuth();
+  usePageMeta({
+    title: "Seller plans & fees",
+    description:
+      "Individual sellers list free with 0% commission. Business plans add a branded storefront from $29/month with 5%/3%/1% commission on delivered sales.",
+    canonicalPath: "/pricing",
+  });
   const plansQuery = useQuery(api.subscriptions.publicPlans);
   const mySub = useQuery(api.subscriptions.mine);
 

@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { usePageMeta } from "@/lib/seo";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
@@ -108,6 +109,12 @@ const groups = [
 
 export default function Support() {
   const { user } = useAuth();
+  usePageMeta({
+    title: "Support",
+    description:
+      "Get help with orders, listings, seller plans or account verification. Open a support ticket and our team replies in one thread.",
+    canonicalPath: "/support",
+  });
   const createTicket = useMutation(api.account.createTicket);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);

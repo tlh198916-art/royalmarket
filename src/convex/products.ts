@@ -17,6 +17,7 @@ const sortValidator = v.union(
   v.literal("price_asc"),
   v.literal("price_desc"),
   v.literal("popular"),
+  v.literal("featured"),
 );
 
 const returnsArgs = v.object({
@@ -137,6 +138,9 @@ async function sellerPublicInfo(
     joinedAt: seller._creationTime,
     image: seller.image,
     sellerType: seller.sellerType ?? "individual",
+    // Email-verified sellers get the public trust badge. Unverified sessions
+    // can never create listings, so this is true for every real shop.
+    verifiedSeller: !!seller.emailVerificationTime && !seller.isAnonymous,
   };
 }
 
@@ -153,12 +157,17 @@ export async function enrich(
   const { moderatorNote: _moderatorNote, embedding: _embedding, ...publicProduct } = product;
   void _moderatorNote;
   void _embedding;
+  const ratingCount = product.ratingCount ?? 0;
   return {
     ...publicProduct,
     seller,
     imageUrl: imageUrls[0] ?? null,
     imageUrls: imageUrls.filter((url): url is string => url !== null),
     available: product.status === "active" && product.quantity > 0,
+    ratingAverage:
+      ratingCount > 0 ? (product.ratingSum ?? 0) / ratingCount : null,
+    ratingCount,
+    featured: !!product.featuredAt,
   };
 }
 
@@ -171,6 +180,13 @@ function applySort(products: Doc<"products">[], sortBy: string) {
       return copy.sort((a, b) => b.priceCents - a.priceCents);
     case "popular":
       return copy.sort((a, b) => b.views - a.views);
+    case "featured":
+      return copy.sort((a, b) => {
+        const aFeatured = a.featuredAt ?? 0;
+        const bFeatured = b.featuredAt ?? 0;
+        if (aFeatured !== bFeatured) return bFeatured - aFeatured;
+        return b._creationTime - a._creationTime;
+      });
     default:
       return copy.sort((a, b) => b._creationTime - a._creationTime);
   }
@@ -189,6 +205,19 @@ export const list = query({
     fulfillment: v.optional(
       v.union(v.literal("pickup"), v.literal("shipping"), v.literal("delivery")),
     ),
+    minPriceCents: v.optional(v.number()),
+    maxPriceCents: v.optional(v.number()),
+    // Minimum average rating (e.g. 4 shows listings rated 4.0 and up).
+    minRating: v.optional(v.number()),
+    condition: v.optional(
+      v.union(
+        v.literal("new"),
+        v.literal("like_new"),
+        v.literal("good"),
+        v.literal("fair"),
+      ),
+    ),
+    featuredOnly: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const limit = Math.min(Math.max(args.limit ?? 48, 1), 200);
@@ -205,19 +234,21 @@ export const list = query({
     let candidates: Doc<"products">[];
 
     if (q) {
+      // Over-fetch so post-filters (price/rating/condition) still have room.
+      const searchLimit = Math.min(limit * 3, 200);
       const [byTitle, byDescription] = await Promise.all([
         ctx.db
           .query("products")
           .withSearchIndex("search_title", (s) =>
             s.search("title", q).eq("status", "active"),
           )
-          .take(limit),
+          .take(searchLimit),
         ctx.db
           .query("products")
           .withSearchIndex("search_description", (s) =>
             s.search("description", q).eq("status", "active"),
           )
-          .take(limit),
+          .take(searchLimit),
       ]);
       const seen = new Set<string>();
       candidates = [...byTitle, ...byDescription].filter((p) => {
@@ -255,6 +286,31 @@ export const list = query({
           return p.fulfillment.shipping.enabled;
         return p.fulfillment.delivery.enabled;
       });
+    }
+
+    if (args.minPriceCents !== undefined || args.maxPriceCents !== undefined) {
+      const min = args.minPriceCents ?? 0;
+      const max = args.maxPriceCents ?? Number.POSITIVE_INFINITY;
+      if (min > max) return [];
+      candidates = candidates.filter(
+        (p) => p.priceCents >= min && p.priceCents <= max,
+      );
+    }
+
+    if (args.condition) {
+      candidates = candidates.filter((p) => p.condition === args.condition);
+    }
+
+    if (args.minRating !== undefined && args.minRating > 0) {
+      candidates = candidates.filter((p) => {
+        const count = p.ratingCount ?? 0;
+        if (count === 0) return false;
+        return (p.ratingSum ?? 0) / count >= args.minRating!;
+      });
+    }
+
+    if (args.featuredOnly) {
+      candidates = candidates.filter((p) => !!p.featuredAt);
     }
 
     const sorted = applySort(candidates, args.sortBy ?? "newest").slice(
@@ -306,12 +362,17 @@ export const get = query({
     const { moderatorNote: _moderatorNote, embedding: _embedding, ...publicProduct } = product;
     void _moderatorNote;
     void _embedding;
+    const ratingCount = product.ratingCount ?? 0;
     return {
       ...publicProduct,
       seller,
       imageUrls: imageUrls.filter((u): u is string => u !== null),
       available: product.status === "active" && product.quantity > 0,
       isOwner,
+      ratingAverage:
+        ratingCount > 0 ? (product.ratingSum ?? 0) / ratingCount : null,
+      ratingCount,
+      featured: !!product.featuredAt,
     };
   },
 });

@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /orders
+Disallow: /checkout
+Disallow: /favorites
+Disallow: /sell/dashboard
+
+# Public pages are indexable. A sitemap.xml needs the production domain plus
+# live product URLs, so it is not shipped as a static file.

@@ -593,6 +593,83 @@ export const approveFulfillment = mutation({
   },
 });
 
+/**
+ * True when the viewer is allowed into this order's conversation: the buyer,
+ * any seller with an item in the order, or a marketplace admin.
+ */
+async function orderViewer(
+  ctx: QueryCtx,
+  orderId: Id<"orders">,
+): Promise<{ user: Doc<"users">; order: Doc<"orders">; isBuyer: boolean; isSeller: boolean } | null> {
+  const user = await requireUser(ctx).catch(() => null);
+  if (!user) return null;
+  const order = await ctx.db.get(orderId);
+  if (!order) return null;
+  const items = await ctx.db
+    .query("orderItems")
+    .withIndex("by_order", (s) => s.eq("orderId", orderId))
+    .collect();
+  const isBuyer = order.buyerId === user._id;
+  const isSeller = items.some((item) => item.sellerId === user._id);
+  if (!isBuyer && !isSeller && !isMarketplaceAdmin(user)) return null;
+  return { user, order, isBuyer, isSeller };
+}
+
+/** Buyer ↔ seller thread for one order. */
+export const messages = query({
+  args: { orderId: v.id("orders") },
+  handler: async (ctx, args) => {
+    const access = await orderViewer(ctx, args.orderId);
+    if (!access) return null;
+    const rows = await ctx.db
+      .query("orderMessages")
+      .withIndex("by_order", (s) => s.eq("orderId", args.orderId))
+      .take(100);
+
+    const participants = new Map<string, string>();
+    const nameFor = async (id: Id<"users">) => {
+      const cached = participants.get(id);
+      if (cached) return cached;
+      const user = await ctx.db.get(id);
+      const name = user?.shopName ?? user?.name ?? "Member";
+      participants.set(id, name);
+      return name;
+    };
+
+    return {
+      viewerRole: access.isBuyer ? ("buyer" as const) : ("seller" as const),
+      messages: await Promise.all(
+        rows.map(async (row) => ({
+          _id: row._id,
+          body: row.body,
+          mine: row.senderId === access.user._id,
+          senderName: await nameFor(row.senderId),
+          createdAt: row._creationTime,
+        })),
+      ),
+    };
+  },
+});
+
+/** Post a message on an order. Same access rules as reading the thread. */
+export const sendMessage = mutation({
+  args: { orderId: v.id("orders"), body: v.string() },
+  handler: async (ctx, args) => {
+    const access = await orderViewer(ctx, args.orderId);
+    if (!access) throw new Error("You cannot message on this order.");
+    const body = args.body.trim();
+    if (body.length < 1) throw new Error("Write a message first.");
+    if (body.length > 1000)
+      throw new Error("Messages must be 1000 characters or fewer.");
+    const id = await ctx.db.insert("orderMessages", {
+      orderId: args.orderId,
+      senderId: access.user._id,
+      body,
+    });
+    return id;
+  },
+});
+
 /** Whether the signed-in user has purchased this product (for review UI). */
 export const purchasedByViewer = query({
   args: { productId: v.string() },

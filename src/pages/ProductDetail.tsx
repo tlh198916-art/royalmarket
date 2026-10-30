@@ -5,19 +5,38 @@ import { ProductMedia } from "@/components/marketplace/ProductMedia";
 import { StarRating } from "@/components/marketplace/StarRating";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
 import { CATEGORIES } from "@/convex/categories";
+import { REPORT_REASONS } from "@/convex/reportReasons";
 import { useAuth } from "@/hooks/use-auth";
 import { useCart } from "@/lib/cart";
 import { formatDate, formatPrice, initials, pluralize } from "@/lib/format";
 import { recordRecentView } from "@/lib/recentlyViewed";
+import { productJsonLd, usePageMeta } from "@/lib/seo";
 import { useMutation, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
   CalendarClock,
   CheckCircle2,
+  Flag,
   Handshake,
   MapPin,
   Package,
@@ -28,7 +47,7 @@ import {
   Store,
   Truck,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 
@@ -49,6 +68,7 @@ export default function ProductDetail() {
 
   const trackView = useMutation(api.products.trackView);
   const createReview = useMutation(api.reviews.create);
+  const reportListing = useMutation(api.reports.create);
   const { add } = useCart();
   const navigate = useNavigate();
 
@@ -57,7 +77,38 @@ export default function ProductDetail() {
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState<string>("prohibited");
+  const [reportDetails, setReportDetails] = useState("");
+  const [reporting, setReporting] = useState(false);
   const viewTracked = useRef(false);
+
+  const listingJsonLd = useMemo(
+    () =>
+      product
+        ? productJsonLd({
+            title: product.title,
+            description: product.description,
+            imageUrl: product.imageUrls[0] ?? null,
+            priceCents: product.priceCents,
+            condition: product.condition,
+            available: product.available,
+            ratingAverage: product.ratingAverage,
+            ratingCount: product.ratingCount,
+            sellerShopName: product.seller?.shopName ?? null,
+          })
+        : null,
+    [product],
+  );
+
+  usePageMeta({
+    title: product ? product.title : "Listing",
+    description: product
+      ? `${product.description.slice(0, 150)} — ${formatPrice(product.priceCents)} on Royalmarket.`
+      : undefined,
+    canonicalPath: product ? `/products/${product._id}` : undefined,
+    jsonLd: listingJsonLd,
+  });
 
   // Record the product view + recently-viewed entry once per mount.
   useEffect(() => {
@@ -243,6 +294,32 @@ export default function ProductDetail() {
     });
   };
 
+  const handleReportSubmit = async () => {
+    setReporting(true);
+    try {
+      await reportListing({
+        productId: product._id,
+        reason: reportReason as
+          | "prohibited"
+          | "misleading"
+          | "counterfeit"
+          | "spam"
+          | "other",
+        details: reportDetails.trim() || undefined,
+      });
+      setReportOpen(false);
+      setReportDetails("");
+      setReportReason("prohibited");
+      toast.success("Report sent — a moderator will review this listing.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not send the report.",
+      );
+    } finally {
+      setReporting(false);
+    }
+  };
+
   const handleReviewSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setSubmitting(true);
@@ -408,8 +485,15 @@ export default function ProductDetail() {
                   {initials(sellerName)}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold">
-                    {sellerName}
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate text-sm font-semibold">
+                      {sellerName}
+                    </span>
+                    {product.seller.verifiedSeller && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
+                        <ShieldCheck className="size-3" /> Verified seller
+                      </span>
+                    )}
                   </span>
                   <span className="block text-xs text-muted-foreground">
                     {product.seller.location ?? "Verified seller"}
@@ -741,7 +825,75 @@ export default function ProductDetail() {
           <span className="inline-flex items-center gap-1.5">
             <MapPin className="size-3.5 text-primary" /> Order tracked in-app
           </span>
+          <button
+            type="button"
+            onClick={() => {
+              if (!isAuthenticated) {
+                toast.error("Sign in to report a listing.");
+                return;
+              }
+              setReportOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
+          >
+            <Flag className="size-3.5" /> Report this listing
+          </button>
         </div>
+
+        <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Report this listing</DialogTitle>
+              <DialogDescription>
+                Tell us what looks wrong. Reports are private, and moderators
+                review every one — a report never removes a listing by itself.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="report-reason">Reason</Label>
+                <Select
+                  value={reportReason}
+                  onValueChange={setReportReason}
+                >
+                  <SelectTrigger id="report-reason" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {REPORT_REASONS.map((reason) => (
+                      <SelectItem key={reason.value} value={reason.value}>
+                        {reason.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="report-details">Details (optional)</Label>
+                <Textarea
+                  id="report-details"
+                  value={reportDetails}
+                  onChange={(event) => setReportDetails(event.target.value)}
+                  maxLength={500}
+                  rows={3}
+                  placeholder="What should the moderator know?"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setReportOpen(false)}
+                disabled={reporting}
+              >
+                Cancel
+              </Button>
+              <Button onClick={handleReportSubmit} disabled={reporting}>
+                {reporting ? "Sending…" : "Submit report"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Link
           to="/products"
