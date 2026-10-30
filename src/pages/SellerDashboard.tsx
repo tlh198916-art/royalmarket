@@ -16,7 +16,7 @@ import { api } from "@/convex/_generated/api";
 import { bpsToPercent } from "@/convex/plans";
 import { useAuth } from "@/hooks/use-auth";
 import { formatDate, formatPrice, initials } from "@/lib/format";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
   Banknote,
@@ -35,8 +35,8 @@ import {
   Truck,
   XCircle,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { Link } from "react-router";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
 type StatusFilter = "all" | "active" | "draft" | "sold" | "removed";
@@ -68,10 +68,18 @@ const paymentStatusLabel: Record<string, string> = {
   failed: "Payment failed",
 };
 
+const connectLabel: Record<string, string> = {
+  not_connected: "Not connected",
+  pending: "Onboarding incomplete",
+  restricted: "Restricted",
+  enabled: "Payouts enabled",
+};
+
 const payoutStatusLabel: Record<string, string> = {
   pending: "Pending",
   in_transit: "In transit",
   paid: "Paid",
+  reversed: "Reversed",
   failed: "Failed",
 };
 
@@ -167,6 +175,67 @@ export default function SellerDashboard() {
   const myLedger = useQuery(api.commissions.myLedger);
   const earnings = useQuery(api.payments.sellerEarnings);
   const recordPayment = useMutation(api.payments.recordCodCollected);
+  const createConnectLink = useAction(api.stripe.createConnectLink);
+  const syncConnectAccount = useAction(api.stripe.syncConnectAccount);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [connectBusy, setConnectBusy] = useState(false);
+  const stripeParam = searchParams.get("stripe");
+
+  // Stripe sends the seller back here after Express onboarding. Refresh the
+  // account state from Stripe, then remove the one-time query parameter.
+  useEffect(() => {
+    if (stripeParam !== "return" && stripeParam !== "refresh") return;
+    let active = true;
+    const refresh = async () => {
+      setConnectBusy(true);
+      try {
+        const account = await syncConnectAccount();
+        if (!active) return;
+        if (account.payoutsEnabled) {
+          toast.success("Stripe payouts are enabled for your shop.");
+        } else if (account.currentlyDue.length > 0) {
+          toast.info("Stripe needs a little more information to enable payouts.");
+        } else {
+          toast.info("Stripe is still reviewing your account.");
+        }
+      } catch (error) {
+        if (!active) return;
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Could not refresh your Stripe account.",
+        );
+      } finally {
+        if (active) {
+          setConnectBusy(false);
+          // Drop the one-time parameter only after the sync completes, so the
+          // effect is not torn down while its promise is still in flight.
+          const next = new URLSearchParams(window.location.search);
+          next.delete("stripe");
+          setSearchParams(next, { replace: true });
+        }
+      }
+    };
+    void refresh();
+    return () => {
+      active = false;
+    };
+  }, [stripeParam, setSearchParams, syncConnectAccount]);
+
+  const handleConnectStripe = async () => {
+    setConnectBusy(true);
+    try {
+      const { url } = await createConnectLink();
+      window.location.assign(url);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not start Stripe onboarding.",
+      );
+      setConnectBusy(false);
+    }
+  };
   const myReferrals = useQuery(api.referrals.myReferrals);
   const ensureReferralCode = useMutation(api.referrals.ensureCode);
   const [creatingCode, setCreatingCode] = useState(false);
@@ -1224,12 +1293,87 @@ export default function SellerDashboard() {
                     </div>
 
                     <div className="mt-4 rounded-xl border border-border/70 bg-background/40 p-4 text-xs leading-5">
-                      <p className="font-semibold">Payout account</p>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-semibold">Stripe payout account</p>
+                        <Badge
+                          variant="outline"
+                          className={
+                            earnings.connect.status === "enabled"
+                              ? "border-emerald-400/40 text-emerald-400"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {connectLabel[earnings.connect.status] ??
+                            earnings.connect.status}
+                        </Badge>
+                      </div>
                       <p className="mt-1 text-muted-foreground">
                         {earnings.connect.status === "enabled"
-                          ? "Stripe Connect is enabled for your shop. Payouts and card payments are handled by Stripe."
-                          : "No Stripe Connect account is linked to your shop. Buyers pay cash on delivery and you collect it directly; card payments and platform payouts stay off until Stripe Connect is configured."}
+                          ? "Your Express account is verified and payouts are enabled. Card orders are transferred to this account after delivery."
+                          : earnings.connect.status === "not_connected"
+                            ? "Connect an Express account to receive card payments. Cash on delivery keeps working either way — you collect that directly."
+                            : "Stripe still needs information (or is reviewing your account) before it can enable payouts. Cash on delivery keeps working in the meantime."}
                       </p>
+                      {earnings.connect.disabledReason && (
+                        <p className="mt-1 text-muted-foreground">
+                          Stripe: {earnings.connect.disabledReason}
+                        </p>
+                      )}
+                      {earnings.connect.currentlyDue.length > 0 && (
+                        <ul className="mt-2 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                          {earnings.connect.currentlyDue.slice(0, 5).map((item) => (
+                            <li key={item}>{item.replace(/\./g, " ")}</li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant={
+                            earnings.connect.status === "enabled"
+                              ? "outline"
+                              : "default"
+                          }
+                          onClick={() => void handleConnectStripe()}
+                          disabled={connectBusy}
+                        >
+                          {connectBusy
+                            ? "Opening Stripe…"
+                            : earnings.connect.status === "enabled"
+                              ? "Manage Stripe account"
+                              : earnings.connect.status === "not_connected"
+                                ? "Set up Stripe payouts"
+                                : "Continue Stripe onboarding"}
+                        </Button>
+                        {earnings.connect.status !== "not_connected" && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={connectBusy}
+                            onClick={async () => {
+                              setConnectBusy(true);
+                              try {
+                                const account = await syncConnectAccount();
+                                toast.success(
+                                  account.payoutsEnabled
+                                    ? "Payouts enabled."
+                                    : "Account refreshed.",
+                                );
+                              } catch (error) {
+                                toast.error(
+                                  error instanceof Error
+                                    ? error.message
+                                    : "Could not refresh the account.",
+                                );
+                              } finally {
+                                setConnectBusy(false);
+                              }
+                            }}
+                          >
+                            Refresh status
+                          </Button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="mt-3 rounded-xl border border-border/70 bg-background/40 p-4 text-xs leading-5">
@@ -1262,7 +1406,7 @@ export default function SellerDashboard() {
                                   }
                                 >
                                   {payout.confirmed
-                                    ? "Paid via Stripe"
+                                    ? "Stripe-confirmed transfer"
                                     : `${payoutStatusLabel[payout.status]} — not Stripe-confirmed`}
                                 </Badge>
                               </span>

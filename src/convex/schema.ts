@@ -298,6 +298,26 @@ const schema = defineSchema(
       shippingFeeCents: v.optional(v.number()),
       placedAt: v.optional(v.number()),
       deliveredAt: v.optional(v.number()),
+      // Card payment state. `paid` is only ever written from a verified Stripe
+      // webhook whose amount matches `totalCents`; COD orders leave this
+      // undefined and are tracked per item instead.
+      paymentStatus: v.optional(
+        v.union(
+          v.literal("unpaid"),
+          v.literal("processing"),
+          v.literal("paid"),
+          v.literal("partially_refunded"),
+          v.literal("refunded"),
+          v.literal("failed"),
+        ),
+      ),
+      stripePaymentIntentId: v.optional(v.string()),
+      stripeChargeId: v.optional(v.string()),
+      cardBrand: v.optional(v.string()),
+      cardLast4: v.optional(v.string()),
+      paidAt: v.optional(v.number()),
+      paymentFailureMessage: v.optional(v.string()),
+      paymentAttempts: v.optional(v.number()),
     }).index("by_buyer", ["buyerId"]),
 
     orderItems: defineTable({
@@ -326,6 +346,19 @@ const schema = defineSchema(
       paymentRecordedBy: v.optional(v.id("users")),
       refundedAt: v.optional(v.number()),
       refundNote: v.optional(v.string()),
+      // Provider-backed refund state. `refundStatus` stays "pending" until
+      // Stripe reports success; paymentStatus only flips to refunded then.
+      refundId: v.optional(v.string()),
+      refundStatus: v.optional(
+        v.union(
+          v.literal("pending"),
+          v.literal("succeeded"),
+          v.literal("failed"),
+        ),
+      ),
+      refundedAmountCents: v.optional(v.number()),
+      // Set once Stripe confirms a transfer of this line's seller proceeds.
+      stripeTransferId: v.optional(v.string()),
     })
       .index("by_seller", ["sellerId"])
       .index("by_buyer", ["buyerId"])
@@ -398,6 +431,7 @@ const schema = defineSchema(
       note: v.optional(v.string()),
     })
       .index("by_seller", ["sellerId"])
+      .index("by_order", ["orderId"])
       .index("by_orderItem", ["orderItemId"])
       .index("by_status", ["status"]),
 
@@ -419,8 +453,13 @@ const schema = defineSchema(
       chargesEnabled: v.boolean(),
       payoutsEnabled: v.boolean(),
       detailsSubmitted: v.boolean(),
+      requirementsCurrentlyDue: v.optional(v.array(v.string())),
+      disabledReason: v.optional(v.string()),
+      lastSyncedAt: v.optional(v.number()),
       updatedAt: v.number(),
-    }).index("by_seller", ["sellerId"]),
+    })
+      .index("by_seller", ["sellerId"])
+      .index("by_account", ["accountId"]),
 
     /**
      * Seller payouts for platform-processed (card) orders. A row is written
@@ -430,6 +469,7 @@ const schema = defineSchema(
      */
     payouts: defineTable({
       sellerId: v.id("users"),
+      orderId: v.optional(v.id("orders")),
       amountCents: v.number(),
       currency: v.literal("usd"),
       provider: v.union(v.literal("stripe"), v.literal("manual")),
@@ -437,6 +477,8 @@ const schema = defineSchema(
         v.literal("pending"),
         v.literal("in_transit"),
         v.literal("paid"),
+        // A Stripe transfer was reversed (refund/reconciliation).
+        v.literal("reversed"),
         v.literal("failed"),
       ),
       providerTransferId: v.optional(v.string()),
@@ -445,7 +487,23 @@ const schema = defineSchema(
       confirmedAt: v.optional(v.number()),
     })
       .index("by_seller", ["sellerId"])
-      .index("by_status", ["status"]),
+      .index("by_status", ["status"])
+      .index("by_transfer", ["providerTransferId"]),
+
+    /**
+     * Verified Stripe webhook events, keyed by the provider event id. The
+     * event row is written in the same transaction as the state change, so a
+     * retried delivery can never apply the same event twice.
+     */
+    stripeWebhookEvents: defineTable({
+      eventId: v.string(),
+      type: v.string(),
+      source: v.union(v.literal("platform"), v.literal("connect")),
+      accountId: v.optional(v.string()),
+      receivedAt: v.number(),
+    })
+      .index("by_eventId", ["eventId"])
+      .index("by_type", ["type"]),
 
     tickets: defineTable({
       name: v.string(),

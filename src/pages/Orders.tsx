@@ -161,7 +161,9 @@ export default function Orders() {
                           {order.items.length === 1 ? "item" : "items"} ·{" "}
                           {order.paymentMethod === "cod"
                             ? "Pay on delivery"
-                            : "Card"}
+                            : order.paymentStatus === "paid"
+                              ? "Paid by card via Stripe"
+                              : "Card · payment not confirmed yet"}
                           {(order.shippingFeeCents ?? 0) > 0
                             ? ` · items ${formatPrice(order.subtotalCents)} + seller fees ${formatPrice(order.shippingFeeCents ?? 0)}`
                             : ""}
@@ -171,6 +173,32 @@ export default function Orders() {
                         <Badge variant="outline" className={meta.className}>
                           {meta.label}
                         </Badge>
+                        {order.paymentMethod === "card" && (
+                          <Badge
+                            variant="outline"
+                            className={
+                              order.paymentStatus === "paid"
+                                ? "border-emerald-400/40 text-emerald-400"
+                                : order.paymentStatus === "failed"
+                                  ? "border-destructive/40 text-destructive"
+                                  : order.paymentStatus === "refunded"
+                                    ? "text-muted-foreground"
+                                    : "border-amber-400/40 text-amber-400"
+                            }
+                          >
+                            {order.paymentStatus === "paid"
+                              ? "Paid by card"
+                              : order.paymentStatus === "failed"
+                                ? "Card payment failed"
+                                : order.paymentStatus === "refunded"
+                                  ? "Refunded to card"
+                                  : order.paymentStatus === "partially_refunded"
+                                    ? "Partially refunded"
+                                    : order.paymentStatus === "processing"
+                                      ? "Confirming with Stripe"
+                                      : "Awaiting Stripe confirmation"}
+                          </Badge>
+                        )}
                         <span className="text-base font-bold">
                           {formatPrice(order.totalCents)}
                         </span>

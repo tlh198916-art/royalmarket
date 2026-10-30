@@ -420,25 +420,68 @@ describe("payout honesty and Stripe readiness", () => {
     ).toBe(true);
   });
 
-  test("Stripe readiness never claims card payments are available", () => {
+  test("Stripe readiness follows the configured environment", () => {
     const empty = payments.assessStripeReadiness({});
     expect(empty.keysPresent).toBe(false);
     expect(empty.cardPaymentsAvailable).toBe(false);
-    expect(empty.missing).toContain("STRIPE_SECRET_KEY");
-    expect(empty.missing).toContain("STRIPE_WEBHOOK_SECRET");
-    expect(empty.missing).toContain("STRIPE_CONNECT_CLIENT_ID");
+    expect(empty.connectAvailable).toBe(false);
+    expect(empty.missing).toEqual([
+      "STRIPE_SECRET_KEY",
+      "STRIPE_PUBLISHABLE_KEY",
+      "STRIPE_WEBHOOK_SECRET",
+      "STRIPE_CONNECT_WEBHOOK_SECRET",
+      "SITE_URL",
+    ]);
+    expect(empty.blockers).toHaveLength(5);
 
     const configured = payments.assessStripeReadiness({
-      STRIPE_SECRET_KEY: "sk_test_placeholder",
-      STRIPE_WEBHOOK_SECRET: "whsec_placeholder",
-      STRIPE_CONNECT_CLIENT_ID: "ca_placeholder",
+      secretKey: "sk_test_placeholder",
+      publishableKey: "pk_test_placeholder",
+      webhookSecret: "whsec_placeholder",
+      connectWebhookSecret: "whsec_connect_placeholder",
+      siteUrl: "https://market.example",
     });
     expect(configured.keysPresent).toBe(true);
     expect(configured.missing).toHaveLength(0);
-    // Keys alone do not make checkout or payouts real.
-    expect(configured.cardPaymentsAvailable).toBe(false);
-    expect(configured.connectAvailable).toBe(false);
-    expect(configured.blockers.length).toBeGreaterThan(0);
+    expect(configured.cardPaymentsAvailable).toBe(true);
+    expect(configured.connectAvailable).toBe(true);
+    expect(configured.blockers).toHaveLength(0);
+    expect(configured.publishableKey).toBe("pk_test_placeholder");
+
+    // A missing webhook secret keeps cards off: payments could never be
+    // confirmed from Stripe, so checkout must not advertise them.
+    const noWebhook = payments.assessStripeReadiness({
+      secretKey: "sk_test_placeholder",
+      publishableKey: "pk_test_placeholder",
+      siteUrl: "https://market.example",
+    });
+    expect(noWebhook.cardPaymentsAvailable).toBe(false);
+    expect(noWebhook.connectAvailable).toBe(true);
+
+    // An insecure SITE_URL is rejected, so onboarding links cannot be built
+    // against an attacker-controlled origin.
+    const insecure = payments.assessStripeReadiness({
+      secretKey: "sk_test_placeholder",
+      publishableKey: "pk_test_placeholder",
+      webhookSecret: "whsec_placeholder",
+      connectWebhookSecret: "whsec_connect_placeholder",
+      siteUrl: "http://market.example",
+    });
+    expect(insecure.connectAvailable).toBe(false);
+    expect(insecure.missing).toContain("SITE_URL");
+
+    // Test-mode-first rail: live keys stay blocked until the deployment
+    // explicitly opts in, so setup cannot charge a real card by accident.
+    const live = payments.assessStripeReadiness({
+      secretKey: "sk_live_placeholder",
+      publishableKey: "pk_live_placeholder",
+      webhookSecret: "whsec_placeholder",
+      connectWebhookSecret: "whsec_connect_placeholder",
+      siteUrl: "https://market.example",
+    });
+    expect(live.cardPaymentsAvailable).toBe(false);
+    expect(live.connectAvailable).toBe(false);
+    expect(live.blockers[0]).toMatch(/test mode/i);
   });
 });
 

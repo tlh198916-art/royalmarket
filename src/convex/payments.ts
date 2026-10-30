@@ -4,6 +4,9 @@ import { isMarketplaceAdmin, requireAdmin, requireUser } from "./lib";
 import { reverseCommission } from "./commissions";
 import { commissionCents } from "./plans";
 import { query, mutation, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { assessStripeReadiness, cardsConfigured } from "./stripeConfig";
+
+export { assessStripeReadiness };
 
 /**
  * Payment ledger for the marketplace.
@@ -26,53 +29,25 @@ export function itemPaymentStatus(item: Doc<"orderItems">): PaymentStatus {
 }
 
 /**
- * Pure Stripe readiness assessment, split from the query so it can be unit
- * tested without deployment environment variables. Configuration presence is
- * reported honestly; the checkout/webhook implementation itself is still
- * missing, so card payments are never advertised as available.
+ * Public Stripe config for the checkout page. The publishable key is safe to
+ * expose; no secret key, webhook secret or connected account id is returned.
  */
-export function assessStripeReadiness(env: {
-  STRIPE_SECRET_KEY?: string;
-  STRIPE_WEBHOOK_SECRET?: string;
-  STRIPE_CONNECT_CLIENT_ID?: string;
-}): {
-  keysPresent: boolean;
-  missing: string[];
-  cardPaymentsAvailable: boolean;
-  connectAvailable: boolean;
-  blockers: string[];
-} {
-  const missing: string[] = [];
-  if (!env.STRIPE_SECRET_KEY) missing.push("STRIPE_SECRET_KEY");
-  if (!env.STRIPE_WEBHOOK_SECRET) missing.push("STRIPE_WEBHOOK_SECRET");
-  if (!env.STRIPE_CONNECT_CLIENT_ID)
-    missing.push("STRIPE_CONNECT_CLIENT_ID");
-
-  return {
-    keysPresent: missing.length === 0,
-    missing,
-    // Never true until a real checkout + webhook implementation ships.
-    cardPaymentsAvailable: false,
-    connectAvailable: false,
-    blockers: [
-      ...missing.map((key) => `${key} is not set`),
-      "Card checkout (PaymentIntent/Checkout Session) is not implemented",
-      "Stripe Connect onboarding links are not implemented",
-      "Webhook event processing is not implemented",
-    ],
-  };
-}
+export const publicConfig = query({
+  args: {},
+  handler: async () => {
+    const readiness = assessStripeReadiness();
+    return {
+      cardPaymentsAvailable: readiness.cardPaymentsAvailable,
+      connectAvailable: readiness.connectAvailable,
+      publishableKey: readiness.publishableKey,
+    };
+  },
+});
 
 /** Admin/dev visibility into what Stripe configuration is actually present. */
 export const readiness = query({
   args: {},
-  handler: async () => {
-    return assessStripeReadiness({
-      STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
-      STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
-      STRIPE_CONNECT_CLIENT_ID: process.env.STRIPE_CONNECT_CLIENT_ID,
-    });
-  },
+  handler: async () => assessStripeReadiness(),
 });
 
 type SellerEarnings = {
@@ -92,12 +67,14 @@ type SellerEarnings = {
     chargesEnabled: boolean;
     payoutsEnabled: boolean;
     detailsSubmitted: boolean;
+    currentlyDue: string[];
+    disabledReason: string | null;
   };
   payouts: {
     _id: Id<"payouts">;
     amountCents: number;
     provider: "stripe" | "manual";
-    status: "pending" | "in_transit" | "paid" | "failed";
+    status: "pending" | "in_transit" | "paid" | "reversed" | "failed";
     /** True only for provider-confirmed Stripe payouts. */
     confirmed: boolean;
     providerTransferId: string | null;
@@ -234,6 +211,8 @@ export const sellerEarnings = query({
     const confirmedPayouts = payoutRows.filter(
       (payout) => payout.provider === "stripe" && payout.status === "paid",
     );
+    // A reversed transfer is not money the seller still holds, so it is not
+    // counted as paid out or in transit; refund reconciliation reverses it.
     const inFlightPayouts = payoutRows.filter(
       (payout) => payout.status === "pending" || payout.status === "in_transit",
     );
@@ -268,6 +247,8 @@ export const sellerEarnings = query({
         chargesEnabled: account?.chargesEnabled ?? false,
         payoutsEnabled: account?.payoutsEnabled ?? false,
         detailsSubmitted: account?.detailsSubmitted ?? false,
+        currentlyDue: account?.requirementsCurrentlyDue ?? [],
+        disabledReason: account?.disabledReason ?? null,
       },
       payouts: payoutRows.map((payout) => ({
         _id: payout._id,
@@ -350,6 +331,11 @@ export const adminRefundItem = mutation({
     if (status === "refunded") throw new Error("This item is already refunded.");
     if (status !== "paid")
       throw new Error("Only a paid item can be refunded.");
+    const order = await ctx.db.get(item.orderId);
+    if (order?.paymentMethod === "card")
+      throw new Error(
+        "Card payments must be refunded through Stripe so the buyer actually gets their money back.",
+      );
 
     await ctx.db.patch(item._id, {
       paymentStatus: "refunded",
@@ -431,6 +417,7 @@ export const adminOverview = query({
         return {
           _id: payout._id,
           sellerName: seller?.shopName ?? seller?.name ?? "Unknown",
+          orderId: payout.orderId ?? null,
           amountCents: payout.amountCents,
           provider: payout.provider,
           status: payout.status,
@@ -456,7 +443,12 @@ export const adminOverview = query({
             sellerName: seller?.shopName ?? seller?.name ?? "Seller",
             grossCents: item.priceCents * item.quantity,
             paymentStatus: itemPaymentStatus(item),
+            refundStatus: item.refundStatus ?? null,
             paymentMethod: orderById.get(item.orderId)?.paymentMethod ?? "cod",
+            orderId: item.orderId,
+            orderPaymentStatus:
+              orderById.get(item.orderId)?.paymentStatus ?? "unpaid",
+            transferId: item.stripeTransferId ?? null,
             paidAt: item.paidAt ?? null,
           };
         }),
@@ -476,11 +468,8 @@ export const adminOverview = query({
       sellers: sellerRows,
       payouts: payoutRows,
       recentPaymentItems,
-      readiness: assessStripeReadiness({
-        STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
-        STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
-        STRIPE_CONNECT_CLIENT_ID: process.env.STRIPE_CONNECT_CLIENT_ID,
-      }),
+      readiness: assessStripeReadiness(),
+      cardPaymentsConfigured: cardsConfigured(),
     };
   },
 });
@@ -564,6 +553,8 @@ export const commissionIntegrity = query({
     let missingCount = 0;
     for (const item of delivered) {
       if (ledgerItems.has(item._id)) continue;
+      // Refunded lines owe no commission, so a missing row is expected.
+      if (item.paymentStatus === "refunded") continue;
       const seller = await ctx.db.get(item.sellerId);
       if (!seller || seller.sellerType !== "business") continue;
       const sub = await ctx.db

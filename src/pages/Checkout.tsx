@@ -1,3 +1,4 @@
+import { CardPaymentForm } from "@/components/marketplace/CardPaymentForm";
 import { EmptyState } from "@/components/marketplace/EmptyState";
 import { Layout } from "@/components/marketplace/Layout";
 import { ProductMedia } from "@/components/marketplace/ProductMedia";
@@ -11,7 +12,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { useCart } from "@/lib/cart";
 import { formatPrice } from "@/lib/format";
 import { computeCheckoutTotals } from "@/lib/orderTotals";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
   CreditCard,
@@ -86,10 +87,21 @@ export default function Checkout() {
     ids: lines.map((line) => line.productId),
   });
   const placeOrder = useMutation(api.orders.place);
+  const createPaymentIntent = useAction(api.stripe.createPaymentIntent);
+  const stripeConfig = useQuery(api.payments.publicConfig);
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
   // Per-seller method choice: sellerId -> method.
   const [choices, setChoices] = useState<Record<string, Method>>({});
+  const [paymentMethod, setPaymentMethod] = useState<"cod" | "card">("cod");
+  // Set once the order is placed and Stripe returned a client secret. The cart
+  // is cleared at that point, so this screen owns the rest of the payment flow.
+  const [pendingCard, setPendingCard] = useState<{
+    orderId: string;
+    clientSecret: string;
+    amountCents: number;
+  } | null>(null);
+  const cardAvailable = stripeConfig?.cardPaymentsAvailable ?? false;
 
   const liveById = useMemo(() => {
     const map = new Map<string, NonNullable<typeof liveProducts>[number]>();
@@ -260,8 +272,9 @@ export default function Checkout() {
     const formData = new FormData(event.currentTarget);
     const note = String(formData.get("fulfillmentNote") ?? "") || undefined;
     setSubmitting(true);
+    let placedOrderId: string | null = null;
     try {
-      const orderId = await placeOrder({
+      placedOrderId = await placeOrder({
         items: rows
           .filter((row) => row.live && row.quantity > 0)
           .map((row) => ({
@@ -273,8 +286,21 @@ export default function Checkout() {
           method: effectiveChoices[group.sellerId],
           note,
         })),
-        paymentMethod: "cod",
+        paymentMethod,
       });
+
+      const orderId = placedOrderId;
+      if (paymentMethod === "card") {
+        const { clientSecret } = await createPaymentIntent({ orderId });
+        clear();
+        setPendingCard({ orderId, clientSecret, amountCents: totalCents });
+        toast.success("Order reserved", {
+          description:
+            "Complete the card payment — the order is marked paid only after Stripe confirms it.",
+        });
+        return;
+      }
+
       clear();
       toast.success("Order placed!", {
         description:
@@ -282,6 +308,17 @@ export default function Checkout() {
       });
       navigate(`/orders?placed=${orderId}`);
     } catch (error) {
+      // The order may already exist when Stripe fails (for example a network
+      // error). Send the buyer to it instead of leaving the cart resubmittable
+      // and risking a duplicate order.
+      if (placedOrderId) {
+        clear();
+        toast.error(
+          "Your order was placed but the card payment could not start. Open the order to try again or pay on delivery.",
+        );
+        navigate(`/orders?placed=${placedOrderId}`);
+        return;
+      }
       toast.error(
         error instanceof Error ? error.message : "Could not place the order.",
       );
@@ -289,6 +326,44 @@ export default function Checkout() {
       setSubmitting(false);
     }
   };
+
+  if (pendingCard) {
+    if (!stripeConfig?.publishableKey) {
+      return (
+        <Layout>
+          <div className="page-container py-16">
+            <Alert variant="destructive">
+              <AlertTitle>Card payments are unavailable</AlertTitle>
+              <AlertDescription>
+                This order was placed but Stripe is not configured on this
+                deployment. Contact support or pay the seller on delivery.
+              </AlertDescription>
+            </Alert>
+          </div>
+        </Layout>
+      );
+    }
+    return (
+      <Layout>
+        <div className="page-container max-w-xl py-10 sm:py-14">
+          <h1 className="text-2xl font-bold tracking-tight">
+            Complete your payment
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Step 2 of 2 · your order is reserved while you pay.
+          </p>
+          <div className="mt-6">
+            <CardPaymentForm
+              publishableKey={stripeConfig.publishableKey}
+              clientSecret={pendingCard.clientSecret}
+              orderId={pendingCard.orderId}
+              amountCents={pendingCard.amountCents}
+            />
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
   if (lines.length === 0) {
     return (
@@ -509,10 +584,20 @@ export default function Checkout() {
             {/* Payment */}
             <section className="rounded-2xl border border-border/70 bg-card p-6">
               <h2 className="text-sm font-bold tracking-tight">Payment</h2>
-              <RadioGroup defaultValue="cod" className="mt-4 space-y-3">
+              <RadioGroup
+                value={paymentMethod}
+                onValueChange={(value) =>
+                  setPaymentMethod(value === "card" ? "card" : "cod")
+                }
+                className="mt-4 space-y-3"
+              >
                 <label
                   htmlFor="pay-cod"
-                  className="flex cursor-pointer items-start gap-3 rounded-xl border border-primary/50 bg-primary/5 p-4"
+                  className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors ${
+                    paymentMethod === "cod"
+                      ? "border-primary/50 bg-primary/5"
+                      : "border-border/70 hover:border-primary/50"
+                  }`}
                 >
                   <RadioGroupItem id="pay-cod" value="cod" className="mt-0.5" />
                   <span className="flex-1">
@@ -528,22 +613,28 @@ export default function Checkout() {
                 </label>
                 <label
                   htmlFor="pay-card"
-                  className="flex cursor-not-allowed items-start gap-3 rounded-xl border border-border/70 p-4 opacity-60"
+                  className={`flex items-start gap-3 rounded-xl border p-4 transition-colors ${
+                    !cardAvailable
+                      ? "cursor-not-allowed border-border/70 opacity-60"
+                      : paymentMethod === "card"
+                        ? "cursor-pointer border-primary/50 bg-primary/5"
+                        : "cursor-pointer border-border/70 hover:border-primary/50"
+                  }`}
                 >
                   <RadioGroupItem
                     id="pay-card"
                     value="card"
-                    disabled
+                    disabled={!cardAvailable}
                     className="mt-0.5"
                   />
                   <span className="flex-1">
                     <span className="flex items-center gap-2 text-sm font-semibold">
-                      <CreditCard className="size-4" /> Card payment
+                      <CreditCard className="size-4" /> Pay securely by card
                     </span>
                     <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                      Coming soon — requires a payment provider to be
-                      configured for this marketplace. We&apos;ll announce it
-                      on the support page when it&apos;s live.
+                      {cardAvailable
+                        ? "Stripe handles the card details. The platform holds the funds and releases each seller's share after delivery. Refunds are processed back to your card."
+                        : "Not configured on this deployment — pay on delivery, or ask the marketplace team to finish Stripe setup."}
                     </span>
                   </span>
                 </label>
@@ -578,9 +669,9 @@ export default function Checkout() {
                 </div>
               </dl>
               <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                Fees above are set by sellers, not the platform. No payment
-                processing fee is charged today because payment happens on
-                delivery.
+                Fees above are set by sellers, not the platform. With card
+                payment, Stripe processing fees apply to the platform and each
+                seller&apos;s share is transferred after delivery.
               </p>
 
               {hasBlockingIssue && (
@@ -606,7 +697,9 @@ export default function Checkout() {
               >
                 {submitting
                   ? "Placing order…"
-                  : `Place order · ${formatPrice(totalCents)}`}
+                  : paymentMethod === "card"
+                    ? `Continue to card payment · ${formatPrice(totalCents)}`
+                    : `Place order · ${formatPrice(totalCents)}`}
               </Button>
 
               <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-muted-foreground">

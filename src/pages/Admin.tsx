@@ -80,6 +80,7 @@ const payoutLabel: Record<string, string> = {
   pending: "Pending",
   in_transit: "In transit",
   paid: "Paid",
+  reversed: "Reversed",
   failed: "Failed",
 };
 
@@ -142,22 +143,69 @@ export default function Admin() {
     api.payments.commissionIntegrity,
     isAdmin ? {} : "skip",
   );
+  const stripeReconciliation = useQuery(
+    api.stripeSync.reconciliation,
+    isAdmin ? {} : "skip",
+  );
   const refundPayment = useMutation(api.payments.adminRefundItem);
+  const refundStripeItem = useAction(api.stripe.refundItem);
+  const releaseOrderFunds = useAction(api.stripe.releaseOrderFunds);
+  const [releasingOrderId, setReleasingOrderId] = useState<string | null>(null);
 
-  const handleRefund = async (itemId: string, title: string) => {
-    if (
-      !window.confirm(
-        `Record a refund for "${title}"? Any pending commission on it is reversed.`,
-      )
-    )
-      return;
+  const handleRefund = async (
+    itemId: string,
+    title: string,
+    method: "cod" | "card",
+  ) => {
+    const prompt =
+      method === "card"
+        ? `Refund "${title}" through Stripe? The buyer gets the money back on their card and the commission is reversed.`
+        : `Record a cash refund for "${title}"? Any pending commission on it is reversed.`;
+    if (!window.confirm(prompt)) return;
     try {
-      await refundPayment({ itemId: itemId as never });
-      toast.success("Refund recorded and pending commission reversed.");
+      if (method === "card") {
+        const result = await refundStripeItem({ itemId });
+        toast.success(
+          result.status === "succeeded"
+            ? "Stripe confirmed the refund and the commission was reversed."
+            : "Stripe accepted the refund; it is still settling.",
+        );
+      } else {
+        await refundPayment({ itemId: itemId as never });
+        toast.success("Cash refund recorded and pending commission reversed.");
+      }
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Could not record refund.",
       );
+    }
+  };
+
+  const handleReleaseFunds = async (orderId: string) => {
+    setReleasingOrderId(orderId);
+    try {
+      const results = await releaseOrderFunds({ orderId });
+      const transferred = results.filter((r) => r.status === "transferred");
+      const failed = results.filter((r) => r.status === "failed");
+      if (failed.length > 0) {
+        toast.error(
+          `${failed.length} transfer${failed.length === 1 ? "" : "s"} failed: ${failed[0].message}`,
+        );
+      } else if (transferred.length > 0) {
+        toast.success(
+          `${transferred.length} Stripe transfer${transferred.length === 1 ? "" : "s"} created. They show as in transit until Stripe's webhook confirms them.`,
+        );
+      } else {
+        toast.info(results[0]?.message ?? "Nothing to release for this order.");
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not release seller funds.",
+      );
+    } finally {
+      setReleasingOrderId(null);
     }
   };
 
@@ -841,9 +889,15 @@ export default function Admin() {
             </h2>
             <Badge
               variant="outline"
-              className="ml-auto text-[10px] text-muted-foreground"
+              className={
+                paymentOverview?.readiness.cardPaymentsAvailable
+                  ? "ml-auto border-emerald-400/40 text-[10px] text-emerald-400"
+                  : "ml-auto text-[10px] text-muted-foreground"
+              }
             >
-              Card payments off
+              {paymentOverview?.readiness.cardPaymentsAvailable
+                ? "Card payments on"
+                : "Card payments off"}
             </Badge>
           </div>
 
@@ -891,18 +945,37 @@ export default function Admin() {
                 ))}
               </div>
 
-              <div className="rounded-xl border border-amber-400/30 bg-amber-400/5 p-4 text-xs leading-5">
+              <div
+                className={`rounded-xl border p-4 text-xs leading-5 ${
+                  paymentOverview.readiness.cardPaymentsAvailable
+                    ? "border-emerald-400/30 bg-emerald-400/5"
+                    : "border-amber-400/30 bg-amber-400/5"
+                }`}
+              >
                 <p className="font-semibold">
-                  Stripe configuration:{" "}
+                  Stripe:{" "}
                   {paymentOverview.readiness.keysPresent
-                    ? "keys present, integration still incomplete"
-                    : "not configured"}
+                    ? "configured"
+                    : "not fully configured"}
                 </p>
                 <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-muted-foreground">
-                  {paymentOverview.readiness.blockers.map((blocker) => (
-                    <li key={blocker}>{blocker}</li>
-                  ))}
+                  {paymentOverview.readiness.blockers.length === 0 ? (
+                    <li>
+                      Card checkout, Connect onboarding, transfers and webhooks
+                      are configured. Confirmation still comes only from
+                      Stripe.
+                    </li>
+                  ) : (
+                    paymentOverview.readiness.blockers.map((blocker) => (
+                      <li key={blocker}>{blocker}</li>
+                    ))
+                  )}
                 </ul>
+                <p className="mt-1.5 text-[10px] text-muted-foreground">
+                  Webhook endpoint: <code>/stripe/webhook</code> on this
+                  deployment&apos;s Convex site URL. Use test-mode keys until a
+                  real test payment has been verified.
+                </p>
               </div>
 
               <div>
@@ -955,17 +1028,48 @@ export default function Admin() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <div className="flex justify-end">
+                            <div className="flex justify-end gap-2">
                               {item.paymentStatus === "paid" ? (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    void handleRefund(item._id, item.title)
-                                  }
-                                >
-                                  Refund
-                                </Button>
+                                <>
+                                  {item.paymentMethod === "card" && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={
+                                        releasingOrderId === item.orderId
+                                      }
+                                      onClick={() =>
+                                        void handleReleaseFunds(item.orderId)
+                                      }
+                                    >
+                                      {releasingOrderId === item.orderId
+                                        ? "Releasing…"
+                                        : item.transferId
+                                          ? "Transferred"
+                                          : "Release funds"}
+                                    </Button>
+                                  )}
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={item.refundStatus === "pending"}
+                                    onClick={() =>
+                                      void handleRefund(
+                                        item._id,
+                                        item.title,
+                                        item.paymentMethod,
+                                      )
+                                    }
+                                  >
+                                    {item.paymentMethod === "card"
+                                      ? "Refund via Stripe"
+                                      : "Refund"}
+                                  </Button>
+                                </>
+                              ) : item.refundStatus === "pending" ? (
+                                <span className="text-xs text-amber-400">
+                                  Refund pending
+                                </span>
                               ) : (
                                 <span className="text-xs text-muted-foreground">
                                   —
@@ -1075,7 +1179,7 @@ export default function Admin() {
                               }
                             >
                               {payout.confirmed
-                                ? "Paid via Stripe"
+                                ? "Stripe-confirmed transfer"
                                 : `${payoutLabel[payout.status] ?? payout.status} — not Stripe-confirmed`}
                             </Badge>
                           </TableCell>
@@ -1124,6 +1228,52 @@ export default function Admin() {
                         </li>
                       ))}
                     </ul>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                  Stripe reconciliation
+                </h3>
+                {stripeReconciliation === undefined ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Checking…
+                  </p>
+                ) : (
+                  <div className="mt-2 space-y-2 text-xs leading-5">
+                    <p className="text-muted-foreground">
+                      {stripeReconciliation.events.length} verified webhook
+                      event
+                      {stripeReconciliation.events.length === 1 ? "" : "s"}{" "}
+                      recorded · state is only written from verified events.
+                    </p>
+                    {stripeReconciliation.issues.length === 0 ? (
+                      <p className="text-muted-foreground">
+                        No local/provider state mismatches in recent orders and
+                        payouts.
+                      </p>
+                    ) : (
+                      <ul className="space-y-1.5">
+                        {stripeReconciliation.issues.map((issue, index) => (
+                          <li
+                            key={`${issue.orderId ?? "payout"}-${index}`}
+                            className="rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2"
+                          >
+                            {issue.issue}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {stripeReconciliation.events.length > 0 && (
+                      <p className="text-muted-foreground">
+                        Latest:{" "}
+                        {stripeReconciliation.events
+                          .slice(0, 3)
+                          .map((event) => event.type)
+                          .join(" · ")}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

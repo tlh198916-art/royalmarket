@@ -3,6 +3,7 @@ import type { OrderStatus } from "./schema";
 import type { Doc, Id } from "./_generated/dataModel";
 import { isMarketplaceAdmin, requireUser, requireVerifiedUser } from "./lib";
 import { accrueCommission, reverseCommission } from "./commissions";
+import { cardsConfigured } from "./stripeConfig";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 
 const methodArg = v.union(
@@ -86,7 +87,9 @@ export const place = mutation({
       throw new Error("Your cart is empty.");
     if (args.items.length > 30)
       throw new Error("An order can contain at most 30 line items.");
-    if (args.paymentMethod !== "cod") {
+    // Card checkout requires the full Stripe test/production configuration:
+    // without a verified webhook, a payment could never be safely confirmed.
+    if (args.paymentMethod !== "cod" && !cardsConfigured()) {
       throw new Error(
         "Card payments are not configured yet. Choose pay on delivery to complete your order.",
       );
@@ -216,7 +219,8 @@ export const place = mutation({
       subtotalCents,
       totalCents,
       status: "placed",
-      paymentMethod: "cod",
+      paymentMethod: args.paymentMethod,
+      paymentStatus: args.paymentMethod === "card" ? "unpaid" : undefined,
       fulfillments: fulfillmentEntries,
       shippingFeeCents,
       placedAt: now,
@@ -389,8 +393,10 @@ export const updateItemStatus = mutation({
     }
 
     // Accrue platform commission for business sellers once an item is
-    // delivered (payment happens on delivery). Idempotent per order item.
-    if (args.status === "delivered") {
+    // delivered (payment happens on delivery). Idempotent per order item, and
+    // never for a line that was already refunded (e.g. a card refund issued
+    // before the seller marked it delivered).
+    if (args.status === "delivered" && item.paymentStatus !== "refunded") {
       const order = await ctx.db.get(item.orderId);
       const fee = order?.fulfillments?.find(
         (f) => f.sellerId === item.sellerId,
@@ -424,6 +430,10 @@ export const cancel = mutation({
       throw new Error("You can only cancel your own orders.");
     if (order.status !== "placed")
       throw new Error("This order is already being fulfilled.");
+    if (order.paymentStatus === "paid")
+      throw new Error(
+        "This order was already paid by card. Contact support for a refund instead of cancelling.",
+      );
 
     const items = await ctx.db
       .query("orderItems")
