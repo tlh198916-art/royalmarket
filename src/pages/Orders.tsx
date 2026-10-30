@@ -240,7 +240,7 @@ export default function Orders() {
                               {item.quantity} × {formatPrice(item.priceCents)}
                             </p>
                           </div>
-                          <div className="flex items-center gap-3">
+                          <div className="flex flex-wrap items-center gap-2">
                             <Badge
                               variant="outline"
                               className={
@@ -250,6 +250,26 @@ export default function Orders() {
                             >
                               {statusMeta[item.status]?.label ?? item.status}
                             </Badge>
+                            {item.paymentStatus === "paid" && (
+                              <Badge
+                                variant="outline"
+                                className="border-emerald-400/40 text-emerald-400"
+                              >
+                                Paid on delivery
+                              </Badge>
+                            )}
+                            {item.paymentStatus === "refunded" && (
+                              <Badge variant="outline">Refunded</Badge>
+                            )}
+                            {item.status === "delivered" &&
+                              (item.paymentStatus ?? "unpaid") === "unpaid" && (
+                                <Badge
+                                  variant="outline"
+                                  className="border-amber-400/40 text-amber-400"
+                                >
+                                  Payment pending
+                                </Badge>
+                              )}
                             {item.status === "delivered" && (
                               <Button
                                 asChild

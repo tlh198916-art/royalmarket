@@ -309,11 +309,29 @@ const schema = defineSchema(
       priceCents: v.number(),
       quantity: v.number(),
       status: orderStatusValidator,
+      // Per-item money state. Cash-on-delivery is collected by the seller at
+      // handoff and recorded here; card payments may only be marked paid by a
+      // verified provider webhook once one is configured. Missing on legacy
+      // rows and read as "unpaid".
+      paymentStatus: v.optional(
+        v.union(
+          v.literal("unpaid"),
+          v.literal("paid"),
+          v.literal("refunded"),
+          v.literal("failed"),
+        ),
+      ),
+      paidAt: v.optional(v.number()),
+      paymentReference: v.optional(v.string()),
+      paymentRecordedBy: v.optional(v.id("users")),
+      refundedAt: v.optional(v.number()),
+      refundNote: v.optional(v.string()),
     })
       .index("by_seller", ["sellerId"])
       .index("by_buyer", ["buyerId"])
       .index("by_order", ["orderId"])
-      .index("by_product", ["productId"]),
+      .index("by_product", ["productId"])
+      .index("by_status", ["status"]),
 
     /**
      * Platform subscription plans + commission settings (singleton doc with
@@ -381,6 +399,52 @@ const schema = defineSchema(
     })
       .index("by_seller", ["sellerId"])
       .index("by_orderItem", ["orderItemId"])
+      .index("by_status", ["status"]),
+
+    /**
+     * Stripe Connect state per seller. Rows exist only after a real Stripe
+     * account is created and synced; a missing row means "not connected" and
+     * never implies payouts are possible.
+     */
+    sellerPaymentAccounts: defineTable({
+      sellerId: v.id("users"),
+      provider: v.literal("stripe"),
+      accountId: v.optional(v.string()),
+      onboardingStatus: v.union(
+        v.literal("not_connected"),
+        v.literal("pending"),
+        v.literal("restricted"),
+        v.literal("enabled"),
+      ),
+      chargesEnabled: v.boolean(),
+      payoutsEnabled: v.boolean(),
+      detailsSubmitted: v.boolean(),
+      updatedAt: v.number(),
+    }).index("by_seller", ["sellerId"]),
+
+    /**
+     * Seller payouts for platform-processed (card) orders. A row is written
+     * by the payment provider integration, never by the app asserting money
+     * moved: `status: "paid"` is only set from a provider-confirmed event,
+     * and the UI refuses to show a payout as completed without it.
+     */
+    payouts: defineTable({
+      sellerId: v.id("users"),
+      amountCents: v.number(),
+      currency: v.literal("usd"),
+      provider: v.union(v.literal("stripe"), v.literal("manual")),
+      status: v.union(
+        v.literal("pending"),
+        v.literal("in_transit"),
+        v.literal("paid"),
+        v.literal("failed"),
+      ),
+      providerTransferId: v.optional(v.string()),
+      note: v.optional(v.string()),
+      createdAt: v.number(),
+      confirmedAt: v.optional(v.number()),
+    })
+      .index("by_seller", ["sellerId"])
       .index("by_status", ["status"]),
 
     tickets: defineTable({

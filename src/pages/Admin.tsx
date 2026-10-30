@@ -62,6 +62,27 @@ const labelFor: Record<string, string> = {
   removed: "Taken down",
 };
 
+const connectLabel: Record<string, string> = {
+  not_connected: "Not connected",
+  pending: "Onboarding pending",
+  restricted: "Restricted",
+  enabled: "Enabled",
+};
+
+const paymentLabel: Record<string, string> = {
+  unpaid: "Payment pending",
+  paid: "Paid",
+  refunded: "Refunded",
+  failed: "Failed",
+};
+
+const payoutLabel: Record<string, string> = {
+  pending: "Pending",
+  in_transit: "In transit",
+  paid: "Paid",
+  failed: "Failed",
+};
+
 export default function Admin() {
   const status = useQuery(api.admin.adminStatus);
   const stats = useQuery(api.admin.stats, status?.isAdmin ? {} : "skip");
@@ -113,6 +134,32 @@ export default function Admin() {
     api.admin.referralOverview,
     isAdmin ? {} : "skip",
   );
+  const paymentOverview = useQuery(
+    api.payments.adminOverview,
+    isAdmin ? {} : "skip",
+  );
+  const commissionIntegrity = useQuery(
+    api.payments.commissionIntegrity,
+    isAdmin ? {} : "skip",
+  );
+  const refundPayment = useMutation(api.payments.adminRefundItem);
+
+  const handleRefund = async (itemId: string, title: string) => {
+    if (
+      !window.confirm(
+        `Record a refund for "${title}"? Any pending commission on it is reversed.`,
+      )
+    )
+      return;
+    try {
+      await refundPayment({ itemId: itemId as never });
+      toast.success("Refund recorded and pending commission reversed.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not record refund.",
+      );
+    }
+  };
 
   const handleFeature = async (productId: string, featured: boolean) => {
     try {
@@ -781,6 +828,305 @@ export default function Admin() {
                   dashboard's "Refer sellers" tab.
                 </p>
               )}
+            </div>
+          )}
+        </section>
+
+        {/* Payments & payouts */}
+        <section className="mt-6 rounded-2xl border border-border/70 bg-card">
+          <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-5 py-4">
+            <Banknote className="size-4 text-primary" />
+            <h2 className="text-sm font-bold tracking-tight">
+              Payments &amp; payouts
+            </h2>
+            <Badge
+              variant="outline"
+              className="ml-auto text-[10px] text-muted-foreground"
+            >
+              Card payments off
+            </Badge>
+          </div>
+
+          {paymentOverview === undefined ? (
+            <p className="px-5 py-6 text-sm text-muted-foreground">Loading…</p>
+          ) : (
+            <div className="space-y-5 p-5">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {[
+                  {
+                    label: "Cash collected",
+                    value: formatPrice(paymentOverview.totals.cashCollectedCents),
+                    note: "Seller-confirmed on delivery",
+                  },
+                  {
+                    label: "Awaiting payment",
+                    value: formatPrice(paymentOverview.totals.awaitingCents),
+                    note: `${paymentOverview.totals.awaitingCount} delivered item${
+                      paymentOverview.totals.awaitingCount === 1 ? "" : "s"
+                    }`,
+                  },
+                  {
+                    label: "Card collected",
+                    value: formatPrice(paymentOverview.totals.cardCollectedCents),
+                    note: "Requires Stripe — none recorded",
+                  },
+                  {
+                    label: "Refunded",
+                    value: formatPrice(paymentOverview.totals.refundedCents),
+                    note: `${paymentOverview.totals.refundedCount} item${
+                      paymentOverview.totals.refundedCount === 1 ? "" : "s"
+                    }`,
+                  },
+                ].map((stat) => (
+                  <div
+                    key={stat.label}
+                    className="rounded-xl border border-border/70 bg-background/40 px-4 py-3"
+                  >
+                    <p className="text-lg font-bold">{stat.value}</p>
+                    <p className="text-[11px] font-medium">{stat.label}</p>
+                    <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                      {stat.note}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-xl border border-amber-400/30 bg-amber-400/5 p-4 text-xs leading-5">
+                <p className="font-semibold">
+                  Stripe configuration:{" "}
+                  {paymentOverview.readiness.keysPresent
+                    ? "keys present, integration still incomplete"
+                    : "not configured"}
+                </p>
+                <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                  {paymentOverview.readiness.blockers.map((blocker) => (
+                    <li key={blocker}>{blocker}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                  Recent delivered payments
+                </h3>
+                {paymentOverview.recentPaymentItems.length === 0 ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    No delivered payments yet. Payment status is recorded per
+                    order item after delivery.
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item</TableHead>
+                        <TableHead>Seller</TableHead>
+                        <TableHead>Amount</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paymentOverview.recentPaymentItems.map((item) => (
+                        <TableRow key={item._id}>
+                          <TableCell className="max-w-[220px]">
+                            <span className="line-clamp-1 text-sm">
+                              {item.title}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {item.sellerName}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {formatPrice(item.grossCents)}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={
+                                item.paymentStatus === "paid"
+                                  ? "border-emerald-400/40 text-emerald-400"
+                                  : item.paymentStatus === "refunded"
+                                    ? "text-muted-foreground"
+                                    : "border-amber-400/40 text-amber-400"
+                              }
+                            >
+                              {paymentLabel[item.paymentStatus] ??
+                                item.paymentStatus}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex justify-end">
+                              {item.paymentStatus === "paid" ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    void handleRefund(item._id, item.title)
+                                  }
+                                >
+                                  Refund
+                                </Button>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">
+                                  —
+                                </span>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                  Seller payout accounts
+                </h3>
+                {paymentOverview.sellers.length === 0 ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    No sellers yet.
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Seller</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Stripe Connect</TableHead>
+                        <TableHead>Charges</TableHead>
+                        <TableHead>Payouts</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paymentOverview.sellers.map((seller) => (
+                        <TableRow key={seller.sellerId}>
+                          <TableCell className="text-sm">
+                            {seller.name}
+                          </TableCell>
+                          <TableCell className="text-xs capitalize text-muted-foreground">
+                            {seller.sellerType}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={
+                                seller.connectStatus === "enabled"
+                                  ? "border-emerald-400/40 text-emerald-400"
+                                  : "text-muted-foreground"
+                              }
+                            >
+                              {connectLabel[seller.connectStatus] ??
+                                seller.connectStatus}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {seller.chargesEnabled ? "Enabled" : "No"}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {seller.payoutsEnabled ? "Enabled" : "No"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                  Payouts
+                </h3>
+                {paymentOverview.payouts.length === 0 ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    No payouts recorded. A payout is only marked paid when
+                    Stripe confirms the transfer — nothing is simulated here.
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Seller</TableHead>
+                        <TableHead>Amount</TableHead>
+                        <TableHead>Provider</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paymentOverview.payouts.map((payout) => (
+                        <TableRow key={payout._id}>
+                          <TableCell className="text-sm">
+                            {payout.sellerName}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {formatPrice(payout.amountCents)}
+                          </TableCell>
+                          <TableCell className="text-xs capitalize text-muted-foreground">
+                            {payout.provider}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={
+                                payout.confirmed
+                                  ? "border-emerald-400/40 text-emerald-400"
+                                  : "text-muted-foreground"
+                              }
+                            >
+                              {payout.confirmed
+                                ? "Paid via Stripe"
+                                : `${payoutLabel[payout.status] ?? payout.status} — not Stripe-confirmed`}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                  Commission integrity
+                </h3>
+                {commissionIntegrity === undefined ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Checking…
+                  </p>
+                ) : commissionIntegrity.issues.length === 0 ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Commission math checks out across{" "}
+                    {commissionIntegrity.checkedEntries} ledger entr
+                    {commissionIntegrity.checkedEntries === 1 ? "y" : "ies"}.
+                  </p>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    <p className="text-xs font-medium text-amber-400">
+                      {commissionIntegrity.issues.length} issue
+                      {commissionIntegrity.issues.length === 1 ? "" : "s"}{" "}
+                      found
+                      {commissionIntegrity.missingAccruals > 0
+                        ? ` · ${commissionIntegrity.missingAccruals} missing accrual${
+                            commissionIntegrity.missingAccruals === 1
+                              ? ""
+                              : "s"
+                          }`
+                        : ""}
+                    </p>
+                    <ul className="space-y-1.5">
+                      {commissionIntegrity.issues.map((issue, index) => (
+                        <li
+                          key={`${issue.type}-${issue.entryId ?? issue.orderItemId ?? index}`}
+                          className="rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-xs leading-5"
+                        >
+                          {issue.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </section>

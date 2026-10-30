@@ -19,6 +19,7 @@ import { formatDate, formatPrice, initials } from "@/lib/format";
 import { useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
+  Banknote,
   CheckCircle2,
   Copy,
   Eye,
@@ -58,6 +59,20 @@ const orderStatusLabel: Record<string, string> = {
   shipped: "Shipped",
   delivered: "Delivered",
   cancelled: "Cancelled",
+};
+
+const paymentStatusLabel: Record<string, string> = {
+  unpaid: "Payment pending",
+  paid: "Paid",
+  refunded: "Refunded",
+  failed: "Payment failed",
+};
+
+const payoutStatusLabel: Record<string, string> = {
+  pending: "Pending",
+  in_transit: "In transit",
+  paid: "Paid",
+  failed: "Failed",
 };
 
 export default function SellerDashboard() {
@@ -121,6 +136,19 @@ export default function SellerDashboard() {
     }
   };
 
+  const handleCollectPayment = async (itemId: string) => {
+    try {
+      await recordPayment({ itemId: itemId as never });
+      toast.success("Cash payment recorded for this item.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not record the payment.",
+      );
+    }
+  };
+
   const handleItemAction = async (
     itemId: string,
     status: "shipped" | "delivered" | "cancelled",
@@ -137,6 +165,8 @@ export default function SellerDashboard() {
 
   const mySub = useQuery(api.subscriptions.mine);
   const myLedger = useQuery(api.commissions.myLedger);
+  const earnings = useQuery(api.payments.sellerEarnings);
+  const recordPayment = useMutation(api.payments.recordCodCollected);
   const myReferrals = useQuery(api.referrals.myReferrals);
   const ensureReferralCode = useMutation(api.referrals.ensureCode);
   const [creatingCode, setCreatingCode] = useState(false);
@@ -600,10 +630,36 @@ export default function SellerDashboard() {
                             </p>
                             <p className="text-xs text-muted-foreground">
                               {item.quantity} × {formatPrice(item.priceCents)} ·{" "}
-                              {orderStatusLabel[item.status] ?? item.status}
+                              {orderStatusLabel[item.status] ?? item.status} ·{" "}
+                              {paymentStatusLabel[item.paymentStatus ?? "unpaid"]}
                             </p>
                           </div>
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {item.status === "delivered" &&
+                              (item.paymentStatus ?? "unpaid") === "unpaid" &&
+                              order.paymentMethod === "cod" && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    void handleCollectPayment(item._id)
+                                  }
+                                >
+                                  <Banknote className="mr-1.5 size-3.5" /> Cash
+                                  collected
+                                </Button>
+                              )}
+                            {item.paymentStatus === "paid" && (
+                              <Badge
+                                variant="outline"
+                                className="border-emerald-400/40 text-emerald-400"
+                              >
+                                Paid
+                              </Badge>
+                            )}
+                            {item.paymentStatus === "refunded" && (
+                              <Badge variant="outline">Refunded</Badge>
+                            )}
                             {item.status === "placed" && (
                               <>
                                 <Button
@@ -1062,6 +1118,161 @@ export default function SellerDashboard() {
                     <Link to="/pricing">Compare plans</Link>
                   </Button>
                 </div>
+              </div>
+
+              {/* Earnings & payouts */}
+              <div className="rounded-2xl border border-border/70 bg-card p-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-sm font-bold tracking-tight">
+                    Earnings &amp; payouts
+                  </h2>
+                  <Badge
+                    variant="outline"
+                    className={
+                      earnings?.connect.status === "enabled"
+                        ? "border-emerald-400/40 text-emerald-400"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    {earnings?.connect.status === "enabled"
+                      ? "Stripe connected"
+                      : "Stripe not connected"}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  Calculated only from delivered order items, commission
+                  entries and payout records. Nothing is estimated or seeded.
+                </p>
+                {earnings === undefined ? (
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    Loading earnings…
+                  </p>
+                ) : earnings === null ? (
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    Sign in as a seller to see earnings.
+                  </p>
+                ) : (
+                  <>
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <div className="rounded-xl border border-border/70 bg-background/40 p-4">
+                        <p className="text-xl font-bold tracking-tight">
+                          {formatPrice(earnings.pendingCents)}
+                        </p>
+                        <p className="mt-0.5 text-[11px] font-medium">
+                          Pending
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          {earnings.pendingCount} delivered item
+                          {earnings.pendingCount === 1 ? "" : "s"} with payment
+                          not recorded
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-border/70 bg-background/40 p-4">
+                        <p className="text-xl font-bold tracking-tight">
+                          {formatPrice(earnings.availableCents)}
+                        </p>
+                        <p className="mt-0.5 text-[11px] font-medium">
+                          Available
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          Card balance the platform holds for you
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-border/70 bg-background/40 p-4">
+                        <p className="text-xl font-bold tracking-tight">
+                          {formatPrice(earnings.paidOutCents)}
+                        </p>
+                        <p className="mt-0.5 text-[11px] font-medium">
+                          Paid out
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          Stripe-confirmed transfers only
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-border/70 bg-background/40 p-4">
+                        <p className="text-xl font-bold tracking-tight">
+                          {formatPrice(earnings.collectedCashCents)}
+                        </p>
+                        <p className="mt-0.5 text-[11px] font-medium">
+                          Collected by you
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          Cash on delivery, already in your hand
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+                      <span>
+                        Gross delivered{" "}
+                        <strong className="font-semibold text-foreground">
+                          {formatPrice(earnings.grossDeliveredCents)}
+                        </strong>
+                      </span>
+                      <span>
+                        Commission{" "}
+                        <strong className="font-semibold text-foreground">
+                          {formatPrice(earnings.commissionCents)}
+                        </strong>
+                      </span>
+                      <span>
+                        Refunded{" "}
+                        <strong className="font-semibold text-foreground">
+                          {formatPrice(earnings.refundedCents)}
+                        </strong>
+                      </span>
+                    </div>
+
+                    <div className="mt-4 rounded-xl border border-border/70 bg-background/40 p-4 text-xs leading-5">
+                      <p className="font-semibold">Payout account</p>
+                      <p className="mt-1 text-muted-foreground">
+                        {earnings.connect.status === "enabled"
+                          ? "Stripe Connect is enabled for your shop. Payouts and card payments are handled by Stripe."
+                          : "No Stripe Connect account is linked to your shop. Buyers pay cash on delivery and you collect it directly; card payments and platform payouts stay off until Stripe Connect is configured."}
+                      </p>
+                    </div>
+
+                    <div className="mt-3 rounded-xl border border-border/70 bg-background/40 p-4 text-xs leading-5">
+                      <p className="font-semibold">Payout history</p>
+                      {earnings.payouts.length === 0 ? (
+                        <p className="mt-1 text-muted-foreground">
+                          No payouts recorded. A payout only appears as paid
+                          when Stripe confirms the transfer.
+                        </p>
+                      ) : (
+                        <ul className="mt-2 space-y-1.5">
+                          {earnings.payouts.map((payout) => (
+                            <li
+                              key={payout._id}
+                              className="flex items-center justify-between gap-3"
+                            >
+                              <span className="text-muted-foreground">
+                                {formatDate(payout.createdAt)}
+                              </span>
+                              <span className="flex items-center gap-2">
+                                <span className="font-semibold">
+                                  {formatPrice(payout.amountCents)}
+                                </span>
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    payout.confirmed
+                                      ? "border-emerald-400/40 text-emerald-400"
+                                      : "text-muted-foreground"
+                                  }
+                                >
+                                  {payout.confirmed
+                                    ? "Paid via Stripe"
+                                    : `${payoutStatusLabel[payout.status]} — not Stripe-confirmed`}
+                                </Badge>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Earnings & commissions */}

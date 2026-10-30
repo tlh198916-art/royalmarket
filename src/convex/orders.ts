@@ -232,6 +232,7 @@ export const place = mutation({
         priceCents: line.product.priceCents,
         quantity: line.quantity,
         status: "placed",
+        paymentStatus: "unpaid",
       });
     }
 
@@ -318,6 +319,7 @@ export const sellerOrders = query({
         _id: order._id,
         status: order.status,
         totalCents: order.totalCents,
+        paymentMethod: order.paymentMethod,
         createdAt: order._creationTime,
         buyerName: buyerName.get(order.buyerId) ?? "Buyer",
         fulfillments: order.fulfillments,
