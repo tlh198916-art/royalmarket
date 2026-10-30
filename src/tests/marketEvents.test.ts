@@ -13,7 +13,7 @@ import { defineTestApp } from "convex-test";
  */
 
 const app = defineTestApp({ schema });
-const { api, createTest } = app.defineModules({ marketEvents });
+const { api, internal, createTest } = app.defineModules({ marketEvents });
 type TestT = ReturnType<typeof createTest>;
 
 /** Sign-in subject format Convex Auth uses: "<userId>|<sessionId>". */
@@ -208,6 +208,60 @@ describe("marketEvents.register", () => {
     const rows = await userT.query(api.marketEvents.list, {});
     expect(rows[0].registrations).toBe(1);
     expect(rows[0].registered).toBe(true);
+  });
+
+  test("alignFoundingSchedule moves a stale stored row onto the code default", async () => {
+    const t = createTest();
+    // The row a live deployment persisted when the launch was Nov 12.
+    await insertEvent(t, {
+      slug: FOUNDING_EVENT.slug,
+      startsAt: Date.UTC(2026, 10, 12, 17, 0),
+    });
+
+    const before = await t.query(api.marketEvents.list, {});
+    expect(before[0].startsAt).toBe(Date.UTC(2026, 10, 12, 17, 0));
+
+    const result = await t.mutation(
+      internal.marketEvents.alignFoundingSchedule,
+      {},
+    );
+    expect(result.status).toBe("updated");
+
+    const row = await t.run((ctx) =>
+      ctx.db
+        .query("marketEvents")
+        .withIndex("by_slug", (q) => q.eq("slug", FOUNDING_EVENT.slug))
+        .first(),
+    );
+    expect(row?.startsAt).toBe(FOUNDING_EVENT.startsAt);
+    expect(row?.durationMinutes).toBe(FOUNDING_EVENT.durationMinutes);
+    // Copy an admin wrote on the row is preserved; only the schedule moves.
+    expect(row?.title).toBe("Founders Q&A");
+
+    const after = await t.query(api.marketEvents.list, {});
+    expect(after[0].startsAt).toBe(FOUNDING_EVENT.startsAt);
+    expect(after[0].endsAt).toBe(
+      FOUNDING_EVENT.startsAt + FOUNDING_EVENT.durationMinutes * 60_000,
+    );
+  });
+
+  test("alignFoundingSchedule is a no-op without a row and idempotent once aligned", async () => {
+    const t = createTest();
+    expect(
+      (await t.mutation(internal.marketEvents.alignFoundingSchedule, {})).status,
+    ).toBe("no-row");
+
+    // Stored row with the right date but the wrong duration.
+    await insertEvent(t, {
+      slug: FOUNDING_EVENT.slug,
+      startsAt: FOUNDING_EVENT.startsAt,
+    });
+    expect(
+      (await t.mutation(internal.marketEvents.alignFoundingSchedule, {})).status,
+    ).toBe("updated");
+    expect(
+      (await t.mutation(internal.marketEvents.alignFoundingSchedule, {})).status,
+    ).toBe("unchanged");
   });
 
   test("closes registration once the event has ended", async () => {

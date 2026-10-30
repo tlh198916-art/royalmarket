@@ -4,6 +4,7 @@ import { eventSlug, FOUNDING_EVENT } from "./eventDefaults";
 import { requireAdmin, requireVerifiedUser } from "./lib";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
+  internalMutation,
   mutation,
   query,
   type MutationCtx,
@@ -312,6 +313,45 @@ export const unregister = mutation({
     if (!existing || existing.status !== "registered") return false;
     await ctx.db.patch(existing._id, { status: "cancelled" });
     return true;
+  },
+});
+
+/**
+ * Ops: point an already-persisted founding-event row at the current schedule
+ * in eventDefaults.ts. `list` serves the stored row over the code default, so
+ * changing the default alone leaves a stale date on /events. Only the start
+ * time and duration are reset — an admin's title/tagline/details edits on the
+ * row are preserved. Internal because it rewrites live event data.
+ */
+export const alignFoundingSchedule = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const expectedEndsAt =
+      FOUNDING_EVENT.startsAt + FOUNDING_EVENT.durationMinutes * 60_000;
+    const row = await findBySlug(ctx, FOUNDING_EVENT.slug);
+    if (!row) {
+      // Nothing stored: `list` serves the code default, already correct.
+      return {
+        status: "no-row" as const,
+        startsAt: FOUNDING_EVENT.startsAt,
+        endsAt: expectedEndsAt,
+      };
+    }
+    const changed =
+      row.startsAt !== FOUNDING_EVENT.startsAt ||
+      row.durationMinutes !== FOUNDING_EVENT.durationMinutes;
+    if (changed) {
+      await ctx.db.patch(row._id, {
+        startsAt: FOUNDING_EVENT.startsAt,
+        durationMinutes: FOUNDING_EVENT.durationMinutes,
+      });
+    }
+    return {
+      status: changed ? ("updated" as const) : ("unchanged" as const),
+      previousStartsAt: row.startsAt,
+      startsAt: FOUNDING_EVENT.startsAt,
+      endsAt: expectedEndsAt,
+    };
   },
 });
 

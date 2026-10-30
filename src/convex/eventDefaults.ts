@@ -34,8 +34,10 @@ export const FOUNDING_EVENT = {
     "Roadmap preview: what's shipping next for sellers on Royalmarket.",
     "Network with other founding sellers before launch week.",
   ],
-  // Nov 12, 2026, 5:00 PM UTC — fixed so the countdown is stable.
-  startsAt: Date.UTC(2026, 10, 12, 17, 0),
+  // Thu Nov 19, 2026, 9:00 AM PT — Pacific is on PST then, so 9:00 AM =
+  // 17:00 UTC. Fixed so the countdown is stable; duration keeps it running to
+  // 10:30 AM PT (18:30 UTC).
+  startsAt: Date.UTC(2026, 10, 19, 17, 0),
   durationMinutes: 90,
   format: "online",
   joinInstructions:

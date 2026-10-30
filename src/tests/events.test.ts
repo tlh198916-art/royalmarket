@@ -68,9 +68,14 @@ describe("FOUNDING_EVENT defaults", () => {
     expect(FOUNDING_EVENT.format).toBe("online");
   });
 
-  test("is scheduled for Nov 12, 2026 17:00 UTC for 90 minutes", () => {
-    expect(FOUNDING_EVENT.startsAt).toBe(Date.UTC(2026, 10, 12, 17, 0));
+  test("is scheduled for Thu Nov 19, 2026 9:00 AM PT for 90 minutes", () => {
+    // 9:00 AM PST (UTC-8) is 17:00 UTC; 90 minutes ends 10:30 AM PT.
+    expect(FOUNDING_EVENT.startsAt).toBe(Date.UTC(2026, 10, 19, 17, 0));
     expect(FOUNDING_EVENT.durationMinutes).toBe(90);
+    const start = new Date(FOUNDING_EVENT.startsAt);
+    expect(start.getUTCDay()).toBe(4); // Thursday
+    expect(start.getUTCDate()).toBe(19);
+    expect(start.getUTCMonth()).toBe(10); // November
   });
 
   test("lists non-empty agenda and attendance details", () => {
