@@ -78,9 +78,10 @@ export const adminStatus = query({
 /**
  * One-off admin handover, run with `bun convex run admin:enforceAdminEmail`.
  *
- * Demotes every retired mailbox that still carries `role: "admin"` and grants
- * the seat to the administrative mailbox if that account already exists and is
- * verified. Safe to re-run.
+ * Admin authority is a single seat owned by `ADMIN_EMAIL`. This demotes every
+ * other mailbox that still carries `role: "admin"` and grants the seat to the
+ * administrative mailbox if that account already exists and is verified. Safe
+ * to re-run.
  */
 export const enforceAdminEmail = internalMutation({
   args: {},
@@ -89,7 +90,7 @@ export const enforceAdminEmail = internalMutation({
 
     const revoked: string[] = [];
     for (const user of users) {
-      if (user.role === "admin" && isRetiredAdminEmail(user.email)) {
+      if (user.role === "admin" && !isAdminEmail(user.email)) {
         await ctx.db.patch(user._id, { role: "user" });
         revoked.push(user.email ?? user._id);
       }
