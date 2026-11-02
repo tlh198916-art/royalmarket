@@ -71,6 +71,35 @@ export async function accrueCommission(
 }
 
 /**
+ * Reduce a commission row after a partial merchandise refund. The remaining
+ * base is recomputed with the same snapshotted rate, so transfer math and the
+ * admin integrity check stay consistent. Full refunds still use
+ * `reverseCommission` rather than this helper.
+ */
+export async function adjustCommissionForRefund(
+  ctx: MutationCtx,
+  orderItemId: Id<"orderItems">,
+  refundedMerchandiseCents: number,
+  note: string,
+): Promise<boolean> {
+  if (!Number.isInteger(refundedMerchandiseCents)) return false;
+  if (refundedMerchandiseCents <= 0) return false;
+  const row = await ctx.db
+    .query("commissionLedger")
+    .withIndex("by_orderItem", (s) => s.eq("orderItemId", orderItemId))
+    .first();
+  if (!row || row.status === "reversed") return false;
+  const nextBaseCents = Math.max(0, row.baseCents - refundedMerchandiseCents);
+  if (nextBaseCents === row.baseCents) return false;
+  await ctx.db.patch(row._id, {
+    baseCents: nextBaseCents,
+    amountCents: commissionCents(nextBaseCents, row.commissionBps),
+    note: note.slice(0, 300),
+  });
+  return true;
+}
+
+/**
  * Reverse a pending commission (refund or cancelled-after-delivery). Confirmed
  * rows require an admin reversal with a note, keeping the audit trail.
  */

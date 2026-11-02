@@ -7,7 +7,10 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { requireAdmin, requireVerifiedUser } from "./lib";
-import { reverseCommission } from "./commissions";
+import {
+  adjustCommissionForRefund,
+  reverseCommission,
+} from "./commissions";
 import { computeSellerTransfer } from "./stripeConfig";
 
 /**
@@ -19,9 +22,10 @@ import { computeSellerTransfer } from "./stripeConfig";
  * ever marked successful from provider-confirmed data:
  * - `paymentSucceeded` requires the event to be signature-verified upstream and
  *   the amount/currency to match the order exactly.
- * - `transferConfirmed` requires Stripe to report the transfer exists and is
- *   not reversed.
- * - `refundSucceeded` requires a succeeded refund object from Stripe.
+ * - `transferConfirmed` looks up the payout before recording its event, so an
+ *   early webhook is retried rather than permanently acknowledged.
+ * - `refundSucceeded` requires a succeeded refund object from Stripe and caps
+ *   cumulative refunds at the captured order total.
  */
 
 type Source = "platform" | "connect";
@@ -74,8 +78,18 @@ export const paymentContext = internalQuery({
       throw new Error("This order is set to pay on delivery.");
     if (order.paymentStatus === "paid")
       throw new Error("This order is already paid.");
-    if (order.paymentStatus === "refunded")
-      throw new Error("This order was refunded.");
+    if (
+      order.paymentStatus === "refunded" ||
+      order.paymentStatus === "partially_refunded"
+    )
+      throw new Error("This order has a Stripe refund and cannot be charged again.");
+    if (order.status === "cancelled")
+      throw new Error("This order was cancelled and cannot be charged.");
+    if (
+      order.paymentLockedTotalCents !== undefined &&
+      order.paymentLockedTotalCents !== order.totalCents
+    )
+      throw new Error("This order's total changed after payment started.");
     if (order.totalCents <= 0) throw new Error("This order has no amount due.");
 
     return {
@@ -105,10 +119,14 @@ export const attachPaymentIntent = internalMutation({
     const order = await ctx.db.get(orderId);
     if (!order) throw new Error("Order not found.");
     if (order.paymentStatus === "paid") return false;
+    if (order.status === "cancelled")
+      throw new Error("Cannot attach a payment to a cancelled order.");
     await ctx.db.patch(order._id, {
       stripePaymentIntentId: args.paymentIntentId,
       paymentStatus: "processing",
       paymentAttempts: Math.max(order.paymentAttempts ?? 0, args.attempt),
+      paymentLockedAt: order.paymentLockedAt ?? Date.now(),
+      paymentLockedTotalCents: order.totalCents,
     });
     return true;
   },
@@ -152,6 +170,10 @@ export const paymentSucceeded = internalMutation({
       );
     if (order.paymentStatus === "paid")
       return { applied: false, reason: "already_paid" as const };
+    if (order.paymentStatus === "partially_refunded")
+      return { applied: false, reason: "already_refunded" as const };
+    if (order.status === "cancelled")
+      return { applied: false, reason: "cancelled_order" as const };
 
     const now = Date.now();
     await ctx.db.patch(order._id, {
@@ -170,6 +192,7 @@ export const paymentSucceeded = internalMutation({
       .collect();
     let paidItems = 0;
     for (const item of items) {
+      if (item.status === "cancelled") continue;
       if ((item.paymentStatus ?? "unpaid") === "refunded") continue;
       await ctx.db.patch(item._id, {
         paymentStatus: "paid",
@@ -179,6 +202,33 @@ export const paymentSucceeded = internalMutation({
       paidItems += 1;
     }
     return { applied: true, paidItems };
+  },
+});
+
+/** Buyer/order details needed to cancel a card PaymentIntent safely. */
+export const cancelContext = internalQuery({
+  args: { orderId: v.string() },
+  handler: async (ctx, args) => {
+    const user = await requireVerifiedUser(ctx);
+    const orderId = ctx.db.normalizeId("orders", args.orderId);
+    if (!orderId) throw new Error("Order not found.");
+    const order = await ctx.db.get(orderId);
+    if (!order) throw new Error("Order not found.");
+    if (order.buyerId !== user._id)
+      throw new Error("You can only cancel your own orders.");
+    if (order.status !== "placed")
+      throw new Error("This order is already being fulfilled.");
+    if (
+      order.paymentStatus === "paid" ||
+      order.paymentStatus === "refunded" ||
+      order.paymentStatus === "partially_refunded"
+    )
+      throw new Error("This order has a confirmed payment and cannot be cancelled.");
+    return {
+      orderId: order._id,
+      buyerId: user._id,
+      paymentIntentId: order.stripePaymentIntentId ?? null,
+    };
   },
 });
 
@@ -204,6 +254,11 @@ export const paymentFailed = internalMutation({
     if (!order) return { applied: false, reason: "unknown_order" as const };
     if (order.paymentStatus === "paid")
       return { applied: false, reason: "already_paid" as const };
+    if (
+      order.paymentStatus === "refunded" ||
+      order.paymentStatus === "partially_refunded"
+    )
+      return { applied: false, reason: "already_refunded" as const };
 
     await ctx.db.patch(order._id, {
       paymentStatus: "failed",
@@ -392,24 +447,28 @@ export const transferContext = internalQuery({
         .first();
       // The seller-set fee is charged once per seller per order, matching
       // checkout. If this seller already received a transfer for this order,
-      // the fee was included then and must not be paid again.
+      // the fee was included then and must not be paid again. Refunded fee
+      // portions are never transferred.
       const priorTransfer = items.some(
         (item) => item.sellerId === sellerId && item.stripeTransferId,
       );
+      const sellerFeeCents =
+        order.fulfillments?.find((f) => f.sellerId === sellerId)?.feeCents ?? 0;
+      const refundedFeeCents = items
+        .filter((item) => item.sellerId === sellerId)
+        .reduce((sum, item) => sum + (item.refundedFeeCents ?? 0), 0);
       const feeCents = priorTransfer
         ? 0
-        : (order.fulfillments?.find((f) => f.sellerId === sellerId)
-            ?.feeCents ?? 0);
+        : Math.max(0, sellerFeeCents - refundedFeeCents);
 
-      let grossCents = 0;
-      let commissionCents = 0;
-      let amountCents = 0;
       const itemIds: Id<"orderItems">[] = [];
       const eligibleLines: {
         priceCents: number;
         quantity: number;
         status: string;
         paymentStatus?: string;
+        refundedAmountCents?: number;
+        refundedFeeCents?: number;
         commissionCents: number;
       }[] = [];
 
@@ -427,27 +486,27 @@ export const transferContext = internalQuery({
           quantity: item.quantity,
           status: item.status,
           paymentStatus: item.paymentStatus,
+          refundedAmountCents: item.refundedAmountCents,
+          refundedFeeCents: item.refundedFeeCents,
           commissionCents: commission,
         });
-        grossCents +=
-          item.status === "delivered" &&
-          (item.paymentStatus ?? "unpaid") === "paid"
-            ? item.priceCents * item.quantity
-            : 0;
-        commissionCents +=
-          item.status === "delivered" &&
-          (item.paymentStatus ?? "unpaid") === "paid"
-            ? commission
-            : 0;
+        const refundedMerchandiseCents = Math.max(
+          0,
+          (item.refundedAmountCents ?? 0) - (item.refundedFeeCents ?? 0),
+        );
         if (
           item.status === "delivered" &&
-          (item.paymentStatus ?? "unpaid") === "paid"
+          (item.paymentStatus ?? "unpaid") === "paid" &&
+          item.priceCents * item.quantity - refundedMerchandiseCents > 0
         ) {
           itemIds.push(item._id);
         }
       }
 
-      amountCents = computeSellerTransfer(eligibleLines, feeCents).netCents;
+      const transfer = computeSellerTransfer(eligibleLines, feeCents);
+      const grossCents = transfer.grossCents;
+      const commissionCents = transfer.commissionCents;
+      const amountCents = transfer.netCents;
 
       let reason: string | null = null;
       if (itemIds.length === 0)
@@ -519,15 +578,49 @@ export const recordTransfer = internalMutation({
     // Only record lines that were not already transferred, so a retried action
     // can never pay the same item twice.
     const itemIds: Id<"orderItems">[] = [];
+    let maximumCents = 0;
     for (const itemId of args.itemIds) {
       const item = await ctx.db.get(itemId);
       if (!item || item.sellerId !== args.sellerId) continue;
       if (item.orderId !== order._id) continue;
       if (item.stripeTransferId) continue;
+      if (item.status !== "delivered") continue;
+      if ((item.paymentStatus ?? "unpaid") !== "paid") continue;
+      const refundedMerchandiseCents = Math.max(
+        0,
+        (item.refundedAmountCents ?? 0) - (item.refundedFeeCents ?? 0),
+      );
+      const remainingCents = Math.max(
+        0,
+        item.priceCents * item.quantity - refundedMerchandiseCents,
+      );
+      if (remainingCents === 0) continue;
       itemIds.push(item._id);
+      maximumCents += remainingCents;
     }
     if (itemIds.length === 0) {
       return { payoutId: null, duplicate: true };
+    }
+
+    const allSellerItems = await ctx.db
+      .query("orderItems")
+      .withIndex("by_order", (s) => s.eq("orderId", order._id))
+      .collect();
+    const priorTransfer = allSellerItems.some(
+      (item) =>
+        item.sellerId === args.sellerId && item.stripeTransferId !== undefined,
+    );
+    if (!priorTransfer) {
+      const sellerFeeCents =
+        order.fulfillments?.find((f) => f.sellerId === args.sellerId)?.feeCents ??
+        0;
+      const refundedFeeCents = allSellerItems
+        .filter((item) => item.sellerId === args.sellerId)
+        .reduce((sum, item) => sum + (item.refundedFeeCents ?? 0), 0);
+      maximumCents += Math.max(0, sellerFeeCents - refundedFeeCents);
+    }
+    if (args.amountCents > maximumCents) {
+      throw new Error("Transfer amount exceeds the seller's refundable balance.");
     }
 
     const now = Date.now();
@@ -557,15 +650,13 @@ export const transferConfirmed = internalMutation({
     amountCents: v.number(),
     currency: v.string(),
     reversed: v.boolean(),
+    /** Stripe's cumulative `amount_reversed`; omitted by older senders. */
+    reversedAmountCents: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const fresh = await recordEvent(ctx, {
-      eventId: args.eventId,
-      type: args.type,
-      source: "platform",
-    });
-    if (!fresh) return { applied: false, reason: "duplicate" as const };
-
+    // Look up the payout BEFORE recording the event. An event that arrives
+    // before recordTransfer must not leave an acknowledged event row behind,
+    // otherwise the retry would be treated as a duplicate and silently lost.
     const payout = await ctx.db
       .query("payouts")
       .withIndex("by_transfer", (s) =>
@@ -580,13 +671,56 @@ export const transferConfirmed = internalMutation({
         `Transfer amount ${args.amountCents}¢ does not match recorded payout ${payout.amountCents}¢.`,
       );
 
-    const now = Date.now();
-    await ctx.db.patch(payout._id, {
-      status: args.reversed ? "reversed" : "paid",
-      confirmedAt: args.reversed ? payout.confirmedAt : (payout.confirmedAt ?? now),
-      note: args.reversed ? "Stripe reversed this transfer." : payout.note,
+    const fresh = await recordEvent(ctx, {
+      eventId: args.eventId,
+      type: args.type,
+      source: "platform",
     });
-    return { applied: true, status: args.reversed ? "reversed" : "paid" };
+    if (!fresh) return { applied: false, reason: "duplicate" as const };
+
+    const reportedReversal = Math.max(
+      0,
+      Math.round(
+        args.reversedAmountCents ?? (args.reversed ? args.amountCents : 0),
+      ),
+    );
+    const reversedAmountCents = Math.min(
+      payout.amountCents,
+      Math.max(payout.reversedAmountCents ?? 0, reportedReversal),
+    );
+    const fullyReversed = reversedAmountCents >= payout.amountCents;
+    const now = Date.now();
+
+    await ctx.db.patch(payout._id, {
+      status: fullyReversed ? "reversed" : "paid",
+      reversedAmountCents,
+      confirmedAt: payout.confirmedAt ?? now,
+      note: fullyReversed
+        ? "Stripe fully reversed this transfer."
+        : reversedAmountCents > 0
+          ? `Stripe reversed ${reversedAmountCents}¢ of this transfer.`
+          : payout.note,
+    });
+
+    if (fullyReversed && payout.orderId) {
+      const items = await ctx.db
+        .query("orderItems")
+        .withIndex("by_order", (s) => s.eq("orderId", payout.orderId!))
+        .collect();
+      for (const item of items) {
+        if (item.sellerId !== payout.sellerId) continue;
+        if (item.stripeTransferId !== args.transferId) continue;
+        // The money is back with the platform; the line may be released again
+        // if it was not itself refunded.
+        await ctx.db.patch(item._id, { stripeTransferId: undefined });
+      }
+    }
+
+    return {
+      applied: true,
+      status: fullyReversed ? "reversed" : "paid",
+      reversedAmountCents,
+    };
   },
 });
 
@@ -594,7 +728,23 @@ export const transferConfirmed = internalMutation({
 /* Refunds                                                                    */
 /* -------------------------------------------------------------------------- */
 
-/** Admin-only refund context for one paid card line. */
+function merchandiseGrossCents(item: Doc<"orderItems">): number {
+  return Math.max(0, Math.round(item.priceCents * item.quantity));
+}
+
+function refundedMerchandiseCents(item: Doc<"orderItems">): number {
+  return Math.max(
+    0,
+    (item.refundedAmountCents ?? 0) - (item.refundedFeeCents ?? 0),
+  );
+}
+
+/**
+ * Refund policy for seller fulfillment fees: merchandise can be refunded
+ * partially or fully at any time. The seller's one-per-order fulfillment fee
+ * is refundable only on the refund that fully covers the final unrefunded line
+ * for that seller. This prevents refunding the same group fee more than once.
+ */
 export const refundContext = internalQuery({
   args: { itemId: v.string() },
   handler: async (ctx, args) => {
@@ -607,16 +757,71 @@ export const refundContext = internalQuery({
     if (!order) throw new Error("Order not found.");
     if (order.paymentMethod !== "card")
       throw new Error("Cash refunds are handled directly with the seller.");
+    if (order.paymentStatus !== "paid" && order.paymentStatus !== "partially_refunded")
+      throw new Error("Stripe has not confirmed this order's payment yet.");
     if (item.paymentStatus !== "paid")
       throw new Error("Only a paid card item can be refunded.");
     if (!order.stripePaymentIntentId)
       throw new Error("This order has no Stripe payment to refund.");
+    if ((item.pendingRefundAmountCents ?? 0) > 0)
+      throw new Error("A refund for this item is already pending with Stripe.");
+
+    const siblings = await ctx.db
+      .query("orderItems")
+      .withIndex("by_order", (s) => s.eq("orderId", order._id))
+      .collect();
+    const sellerItems = siblings.filter((s) => s.sellerId === item.sellerId);
+    const merchandiseCents = merchandiseGrossCents(item);
+    const alreadyMerchandiseCents = refundedMerchandiseCents(item);
+    const merchandiseRemainingCents = Math.max(
+      0,
+      merchandiseCents - alreadyMerchandiseCents,
+    );
+    const otherSellerItemsRefunded = sellerItems.every(
+      (sibling) =>
+        sibling._id === item._id ||
+        refundedMerchandiseCents(sibling) >= merchandiseGrossCents(sibling),
+    );
+    const sellerFeeCents =
+      order.fulfillments?.find((f) => f.sellerId === item.sellerId)?.feeCents ??
+      0;
+    const refundedFeeCents = sellerItems.reduce(
+      (sum, sibling) => sum + (sibling.refundedFeeCents ?? 0),
+      0,
+    );
+    const feeRemainingCents = otherSellerItemsRefunded
+      ? Math.max(0, sellerFeeCents - refundedFeeCents)
+      : 0;
+    const itemTotalCents = Math.max(
+      0,
+      (order.refundedAmountCents ?? 0),
+      siblings.reduce((sum, s) => sum + (s.refundedAmountCents ?? 0), 0),
+    );
+    const pendingOrderCents = siblings.reduce(
+      (sum, s) => sum + (s.pendingRefundAmountCents ?? 0),
+      0,
+    );
+    const capturedRemainingCents = Math.max(
+      0,
+      order.totalCents - itemTotalCents - pendingOrderCents,
+    );
+    const maximumRefundCents = Math.min(
+      merchandiseRemainingCents + feeRemainingCents,
+      capturedRemainingCents,
+    );
+    if (maximumRefundCents <= 0) {
+      throw new Error("This item has no refundable balance left.");
+    }
 
     return {
       itemId: item._id,
       orderId: order._id,
       paymentIntentId: order.stripePaymentIntentId,
-      amountCents: item.priceCents * item.quantity,
+      amountCents: maximumRefundCents,
+      merchandiseCents: merchandiseRemainingCents,
+      feeCents: feeRemainingCents,
+      refundedCents: item.refundedAmountCents ?? 0,
+      capturedRemainingCents,
       title: item.title,
       transferred: !!item.stripeTransferId,
     };
@@ -628,6 +833,7 @@ export const refundPending = internalMutation({
   args: {
     itemId: v.string(),
     refundId: v.string(),
+    amountCents: v.number(),
   },
   handler: async (ctx, args) => {
     const itemId = ctx.db.normalizeId("orderItems", args.itemId);
@@ -635,18 +841,40 @@ export const refundPending = internalMutation({
     const item = await ctx.db.get(itemId);
     if (!item) return false;
     if (item.paymentStatus === "refunded") return false;
+    if (item.refundStatus === "pending" && item.refundId === args.refundId) {
+      return true;
+    }
+    if ((item.pendingRefundAmountCents ?? 0) > 0) {
+      throw new Error("Another refund for this item is already pending.");
+    }
+    if (!Number.isInteger(args.amountCents) || args.amountCents <= 0)
+      throw new Error("Invalid refund amount.");
+    const order = await ctx.db.get(item.orderId);
+    if (!order) return false;
+    const siblings = await ctx.db
+      .query("orderItems")
+      .withIndex("by_order", (s) => s.eq("orderId", order._id))
+      .collect();
+    const refundedTotal = Math.max(
+      order.refundedAmountCents ?? 0,
+      siblings.reduce((sum, s) => sum + (s.refundedAmountCents ?? 0), 0),
+    );
+    if (refundedTotal + args.amountCents > order.totalCents) {
+      throw new Error("Refund amount exceeds the captured order total.");
+    }
     await ctx.db.patch(item._id, {
       refundId: args.refundId,
       refundStatus: "pending",
+      pendingRefundAmountCents: args.amountCents,
     });
     return true;
   },
 });
 
 /**
- * Apply a Stripe-confirmed refund. Full refunds flip the line to refunded and
- * reverse the commission ledger row; partial refunds are recorded without
- * pretending the whole line was refunded.
+ * Apply a Stripe-confirmed refund. Cumulative refunds are capped at both the
+ * line and the captured order total. A line becomes fully refunded only after
+ * its merchandise is covered; fees refund on the final seller line.
  */
 export const refundSucceeded = internalMutation({
   args: {
@@ -670,50 +898,123 @@ export const refundSucceeded = internalMutation({
       return { applied: false, reason: "already_refunded" as const };
     if (item.paymentStatus !== "paid")
       throw new Error("Refund received for an item that is not paid.");
-
-    const grossCents = item.priceCents * item.quantity;
     if (!Number.isInteger(args.amountCents) || args.amountCents <= 0)
       throw new Error("Invalid refund amount.");
-    if (args.amountCents > grossCents)
-      throw new Error("Refund amount exceeds the item total.");
+    if (
+      (item.pendingRefundAmountCents ?? 0) > 0 &&
+      item.refundId !== args.refundId
+    )
+      throw new Error("Another refund for this item is already pending.");
 
-    const now = Date.now();
-    if (args.amountCents >= grossCents) {
-      await ctx.db.patch(item._id, {
-        paymentStatus: "refunded",
-        refundStatus: "succeeded",
-        refundId: args.refundId,
-        refundedAt: now,
-        refundedAmountCents: grossCents,
-        refundNote: "Refunded through Stripe.",
-      });
-      await reverseCommission(ctx, item._id, "Stripe refund.");
-
-      const siblings = await ctx.db
-        .query("orderItems")
-        .withIndex("by_order", (s) => s.eq("orderId", item.orderId))
-        .collect();
-      const allRefunded = siblings.every(
-        (sibling) =>
-          sibling._id === item._id || sibling.paymentStatus === "refunded",
-      );
-      const order = await ctx.db.get(item.orderId);
-      if (order) {
-        await ctx.db.patch(order._id, {
-          paymentStatus: allRefunded ? "refunded" : "partially_refunded",
-        });
-      }
-      return { applied: true, partial: false };
+    const order = await ctx.db.get(item.orderId);
+    if (!order) return { applied: false, reason: "unknown_order" as const };
+    const siblings = await ctx.db
+      .query("orderItems")
+      .withIndex("by_order", (s) => s.eq("orderId", order._id))
+      .collect();
+    const sellerItems = siblings.filter((s) => s.sellerId === item.sellerId);
+    const grossCents = merchandiseGrossCents(item);
+    const alreadyMerchandiseCents = refundedMerchandiseCents(item);
+    const alreadyFeeCents = item.refundedFeeCents ?? 0;
+    const merchandiseRemainingCents = Math.max(
+      0,
+      grossCents - alreadyMerchandiseCents,
+    );
+    const otherSellerItemsRefunded = sellerItems.every(
+      (sibling) =>
+        sibling._id === item._id ||
+        refundedMerchandiseCents(sibling) >= merchandiseGrossCents(sibling),
+    );
+    const sellerFeeCents =
+      order.fulfillments?.find((f) => f.sellerId === item.sellerId)?.feeCents ??
+      0;
+    const refundedFeeCents = sellerItems.reduce(
+      (sum, sibling) => sum + (sibling.refundedFeeCents ?? 0),
+      0,
+    );
+    const feeRemainingCents =
+      otherSellerItemsRefunded && args.amountCents >= merchandiseRemainingCents
+        ? Math.max(0, sellerFeeCents - refundedFeeCents)
+        : 0;
+    const feePortionCents = Math.min(
+      feeRemainingCents,
+      Math.max(0, args.amountCents - merchandiseRemainingCents),
+    );
+    const merchandisePortionCents = Math.min(
+      merchandiseRemainingCents,
+      Math.max(0, args.amountCents - feePortionCents),
+    );
+    const maximumCents = merchandiseRemainingCents + feeRemainingCents;
+    if (args.amountCents > maximumCents) {
+      throw new Error("Refund amount exceeds the item's refundable balance.");
     }
 
+    const priorOrderRefundedCents = Math.max(
+      order.refundedAmountCents ?? 0,
+      siblings.reduce(
+        (sum, sibling) =>
+          sum +
+          (sibling._id === item._id ? 0 : (sibling.refundedAmountCents ?? 0)),
+        item.refundedAmountCents ?? 0,
+      ),
+    );
+    if (priorOrderRefundedCents + args.amountCents > order.totalCents) {
+      throw new Error("Refund amount exceeds the captured order total.");
+    }
+
+    const now = Date.now();
+    const newRefundedAmountCents =
+      (item.refundedAmountCents ?? 0) + args.amountCents;
+    const fullyRefunded = merchandiseRemainingCents <= merchandisePortionCents;
     await ctx.db.patch(item._id, {
+      paymentStatus: fullyRefunded ? "refunded" : "paid",
       refundStatus: "succeeded",
       refundId: args.refundId,
-      refundedAmountCents:
-        (item.refundedAmountCents ?? 0) + args.amountCents,
-      refundNote: "Partial refund through Stripe.",
+      refundedAt: fullyRefunded ? now : item.refundedAt,
+      refundedAmountCents: newRefundedAmountCents,
+      refundedFeeCents: alreadyFeeCents + feePortionCents,
+      pendingRefundAmountCents: undefined,
+      refundNote: fullyRefunded
+        ? "Refunded through Stripe."
+        : "Partial refund through Stripe.",
     });
-    return { applied: true, partial: true };
+
+    if (fullyRefunded) {
+      await reverseCommission(ctx, item._id, "Stripe refund.");
+    } else if (merchandisePortionCents > 0) {
+      await adjustCommissionForRefund(
+        ctx,
+        item._id,
+        merchandisePortionCents,
+        "Partial Stripe refund.",
+      );
+    }
+
+    const updatedSiblings = await ctx.db
+      .query("orderItems")
+      .withIndex("by_order", (s) => s.eq("orderId", order._id))
+      .collect();
+    const orderRefundedCents = updatedSiblings.reduce(
+      (sum, sibling) => sum + (sibling.refundedAmountCents ?? 0),
+      0,
+    );
+    const allRefunded =
+      orderRefundedCents >= order.totalCents &&
+      updatedSiblings.every(
+        (sibling) => sibling.paymentStatus === "refunded",
+      );
+    await ctx.db.patch(order._id, {
+      refundedAmountCents: orderRefundedCents,
+      paymentStatus: allRefunded ? "refunded" : "partially_refunded",
+    });
+
+    return {
+      applied: true,
+      partial: !fullyRefunded,
+      merchandiseCents: merchandisePortionCents,
+      feeCents: feePortionCents,
+      orderRefundedCents,
+    };
   },
 });
 
@@ -725,9 +1026,11 @@ export const refundFailed = internalMutation({
     if (!itemId) return false;
     const item = await ctx.db.get(itemId);
     if (!item || item.paymentStatus === "refunded") return false;
+    if (item.refundId && item.refundId !== args.refundId) return false;
     await ctx.db.patch(item._id, {
       refundId: args.refundId,
       refundStatus: "failed",
+      pendingRefundAmountCents: undefined,
     });
     return true;
   },

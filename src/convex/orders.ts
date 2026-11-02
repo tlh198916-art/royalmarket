@@ -4,7 +4,13 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { isMarketplaceAdmin, requireUser, requireVerifiedUser } from "./lib";
 import { accrueCommission, reverseCommission } from "./commissions";
 import { cardsConfigured } from "./stripeConfig";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 
 const methodArg = v.union(
   v.literal("meetup"),
@@ -419,6 +425,58 @@ export const updateItemStatus = mutation({
   },
 });
 
+type CancellableOrder = Doc<"orders">;
+
+/**
+ * Shared cancellation state change. Once a PaymentIntent exists the order
+ * total is an immutable snapshot: it is never reset, because Stripe may still
+ * settle the amount that was authorized. `cancelOrderForPayment` in stripe.ts
+ * cancels the provider intent before calling the internal wrapper below.
+ */
+async function applyCancellation(
+  ctx: MutationCtx,
+  order: CancellableOrder,
+): Promise<void> {
+  const items = await ctx.db
+    .query("orderItems")
+    .withIndex("by_order", (s) => s.eq("orderId", order._id))
+    .collect();
+
+  for (const item of items) {
+    if (item.status !== "placed") continue;
+    await ctx.db.patch(item._id, { status: "cancelled" });
+    // Commission safety net — a cancelled item never keeps a pending row.
+    await reverseCommission(ctx, item._id, "Order cancelled by buyer.");
+    const product = await ctx.db.get(item.productId);
+    if (product) {
+      await ctx.db.patch(item.productId, {
+        quantity: product.quantity + item.quantity,
+        soldCount: Math.max(0, product.soldCount - item.quantity),
+      });
+    }
+  }
+
+  const paymentLocked =
+    !!order.stripePaymentIntentId ||
+    !!order.paymentLockedAt ||
+    order.paymentStatus === "processing";
+  await ctx.db.patch(order._id, {
+    status: "cancelled",
+    // A cancelled unpaid order owes no fulfillment fee. A locked/settling card
+    // order keeps its captured total so the ledger never rewrites history.
+    shippingFeeCents: paymentLocked ? order.shippingFeeCents : 0,
+    totalCents: paymentLocked ? order.totalCents : order.subtotalCents,
+    paymentStatus:
+      order.paymentStatus === "processing"
+        ? "failed"
+        : order.paymentStatus,
+    paymentFailureMessage:
+      order.paymentStatus === "processing"
+        ? "Payment was canceled with the order."
+        : order.paymentFailureMessage,
+  });
+}
+
 /** Buyer cancels an order that no seller has started shipping. */
 export const cancel = mutation({
   args: { orderId: v.id("orders") },
@@ -434,32 +492,44 @@ export const cancel = mutation({
       throw new Error(
         "This order was already paid by card. Contact support for a refund instead of cancelling.",
       );
+    if (
+      order.paymentStatus === "refunded" ||
+      order.paymentStatus === "partially_refunded"
+    )
+      throw new Error("This order has a Stripe refund and cannot be cancelled.");
+    if (
+      order.paymentMethod === "card" &&
+      (order.stripePaymentIntentId || order.paymentStatus === "processing")
+    )
+      throw new Error(
+        "This card payment is still open. Use the card cancellation action so Stripe can cancel the PaymentIntent first.",
+      );
 
-    const items = await ctx.db
-      .query("orderItems")
-      .withIndex("by_order", (s) => s.eq("orderId", args.orderId))
-      .collect();
+    await applyCancellation(ctx, order);
+    return true;
+  },
+});
 
-    for (const item of items) {
-      if (item.status !== "placed") continue;
-      await ctx.db.patch(item._id, { status: "cancelled" });
-      // Commission safety net — a cancelled item never keeps a pending row.
-      await reverseCommission(ctx, item._id, "Order cancelled by buyer.");
-      const product = await ctx.db.get(item.productId);
-      if (product) {
-        await ctx.db.patch(item.productId, {
-          quantity: product.quantity + item.quantity,
-          soldCount: Math.max(0, product.soldCount - item.quantity),
-        });
-      }
-    }
-
-    // Cancelled orders owe no fulfillment fees.
-    await ctx.db.patch(args.orderId, {
-      status: "cancelled",
-      shippingFeeCents: 0,
-      totalCents: order.subtotalCents,
-    });
+/**
+ * Cancellation after the Node action has cancelled Stripe's PaymentIntent.
+ * Internal-only: the action checks the caller is the buyer before invoking it.
+ */
+export const cancelConfirmed = internalMutation({
+  args: { orderId: v.id("orders"), buyerId: v.id("users") },
+  handler: async (ctx, args) => {
+    const order = await ctx.db.get(args.orderId);
+    if (!order) throw new Error("Order not found.");
+    if (order.buyerId !== args.buyerId)
+      throw new Error("You can only cancel your own orders.");
+    if (order.status !== "placed")
+      throw new Error("This order is already being fulfilled.");
+    if (
+      order.paymentStatus === "paid" ||
+      order.paymentStatus === "refunded" ||
+      order.paymentStatus === "partially_refunded"
+    )
+      throw new Error("This order has a confirmed payment and cannot be cancelled.");
+    await applyCancellation(ctx, order);
     return true;
   },
 });
@@ -487,6 +557,17 @@ export const setFulfillment = mutation({
     if (order.status !== "placed")
       throw new Error(
         "This order is already in progress — the arrangement is locked.",
+      );
+    if (
+      order.stripePaymentIntentId ||
+      order.paymentLockedAt ||
+      order.paymentStatus === "processing" ||
+      order.paymentStatus === "paid" ||
+      order.paymentStatus === "refunded" ||
+      order.paymentStatus === "partially_refunded"
+    )
+      throw new Error(
+        "Payment has started — the order total and fulfillment terms are locked.",
       );
     const orderItems = await ctx.db
       .query("orderItems")

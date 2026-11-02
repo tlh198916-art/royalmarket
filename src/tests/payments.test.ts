@@ -498,6 +498,73 @@ describe("payout honesty and Stripe readiness", () => {
 });
 
 describe("admin payment visibility and commission integrity", () => {
+  test("paid card payments are visible and refundable before delivery", async () => {
+    const t = createTest();
+    const adminUser = await newUser(t, { role: "admin" });
+    const seller = await newUser(t, { seller: true });
+    const buyer = await newUser(t);
+    const product = await insertProduct(t, seller);
+    const { orderId, itemId } = await t.run(async (ctx) => {
+      const orderId = await ctx.db.insert("orders", {
+        buyerId: buyer,
+        items: [
+          {
+            productId: product,
+            sellerId: seller,
+            title: "Hand-thrown mug",
+            priceCents: 10_000,
+            quantity: 1,
+          },
+        ],
+        subtotalCents: 10_000,
+        totalCents: 10_500,
+        status: "placed",
+        paymentMethod: "card",
+        paymentStatus: "paid",
+        stripePaymentIntentId: "pi_admin_visible",
+        stripeChargeId: "ch_admin_visible",
+        fulfillments: [
+          {
+            sellerId: seller,
+            method: "shipping" as const,
+            buyerAgreed: true,
+            sellerAgreed: true,
+            feeCents: 500,
+          },
+        ],
+        shippingFeeCents: 500,
+        placedAt: Date.now(),
+      });
+      const itemId = await ctx.db.insert("orderItems", {
+        orderId,
+        buyerId: buyer,
+        sellerId: seller,
+        productId: product,
+        title: "Hand-thrown mug",
+        priceCents: 10_000,
+        quantity: 1,
+        status: "placed",
+        paymentStatus: "paid",
+        paidAt: Date.now(),
+      });
+      return { orderId, itemId };
+    });
+
+    const overview = await as(t, adminUser).query(
+      api.payments.adminOverview,
+      {},
+    );
+    const row = overview.recentPaymentItems.find((item) => item._id === itemId);
+    expect(row).toMatchObject({
+      itemStatus: "placed",
+      paymentMethod: "card",
+      paymentStatus: "paid",
+      grossCents: 10_000,
+      refundableCents: 10_500,
+    });
+    expect(row?.orderId).toBe(orderId);
+  });
+
   test("admin overview totals reflect recorded and awaiting payments", async () => {
     const t = createTest();
     const adminUser = await newUser(t, { role: "admin" });

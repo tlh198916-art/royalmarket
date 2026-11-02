@@ -156,18 +156,45 @@ export default function Admin() {
     itemId: string,
     title: string,
     method: "cod" | "card",
+    refundableCents: number,
   ) => {
-    const prompt =
-      method === "card"
-        ? `Refund "${title}" through Stripe? The buyer gets the money back on their card and the commission is reversed.`
-        : `Record a cash refund for "${title}"? Any pending commission on it is reversed.`;
-    if (!window.confirm(prompt)) return;
+    let amountCents: number | undefined;
+    if (method === "card") {
+      const input = window.prompt(
+        `Refund amount for "${title}" in USD (maximum ${formatPrice(refundableCents)}). Leave the default to refund the remaining balance.`,
+        (refundableCents / 100).toFixed(2),
+      );
+      if (input === null) return;
+      amountCents = Math.round(Number(input) * 100);
+      if (
+        !Number.isFinite(amountCents) ||
+        amountCents <= 0 ||
+        amountCents > refundableCents
+      ) {
+        toast.error(
+          `Enter an amount between $0.01 and ${formatPrice(refundableCents)}.`,
+        );
+        return;
+      }
+      if (
+        !window.confirm(
+          `Refund ${formatPrice(amountCents)} for "${title}" through Stripe? The buyer gets the money back on their card, and seller proceeds/commission are reduced.`,
+        )
+      )
+        return;
+    } else if (
+      !window.confirm(
+        `Record a cash refund for "${title}"? Any pending commission on it is reversed.`,
+      )
+    )
+      return;
+
     try {
       if (method === "card") {
-        const result = await refundStripeItem({ itemId });
+        const result = await refundStripeItem({ itemId, amountCents });
         toast.success(
           result.status === "succeeded"
-            ? "Stripe confirmed the refund and the commission was reversed."
+            ? "Stripe confirmed the refund and the seller accounting was reduced."
             : "Stripe accepted the refund; it is still settling.",
         );
       } else {
@@ -980,12 +1007,13 @@ export default function Admin() {
 
               <div>
                 <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                  Recent delivered payments
+                  Recent card &amp; delivered payments
                 </h3>
                 {paymentOverview.recentPaymentItems.length === 0 ? (
                   <p className="mt-2 text-sm text-muted-foreground">
-                    No delivered payments yet. Payment status is recorded per
-                    order item after delivery.
+                    No card payments or delivered cash payments yet. Paid card
+                    rows appear here even before delivery so they can be
+                    refunded.
                   </p>
                 ) : (
                   <Table>
@@ -1005,12 +1033,20 @@ export default function Admin() {
                             <span className="line-clamp-1 text-sm">
                               {item.title}
                             </span>
+                            <span className="text-[10px] capitalize text-muted-foreground">
+                              {item.itemStatus}
+                            </span>
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {item.sellerName}
                           </TableCell>
                           <TableCell className="text-sm">
                             {formatPrice(item.grossCents)}
+                            {item.refundedCents > 0 && (
+                              <span className="block text-[10px] text-amber-400">
+                                {formatPrice(item.refundedCents)} refunded
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Badge
@@ -1052,12 +1088,17 @@ export default function Admin() {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    disabled={item.refundStatus === "pending"}
+                                    disabled={
+                                      item.refundStatus === "pending" ||
+                                      (item.paymentMethod === "card" &&
+                                        item.refundableCents <= 0)
+                                    }
                                     onClick={() =>
                                       void handleRefund(
                                         item._id,
                                         item.title,
                                         item.paymentMethod,
+                                        item.refundableCents,
                                       )
                                     }
                                   >

@@ -318,6 +318,14 @@ const schema = defineSchema(
       paidAt: v.optional(v.number()),
       paymentFailureMessage: v.optional(v.string()),
       paymentAttempts: v.optional(v.number()),
+      // Snapshot taken when the PaymentIntent is attached. Order terms must not
+      // change after this point, because Stripe has been authorized for this
+      // exact amount. Kept optional for legacy orders.
+      paymentLockedAt: v.optional(v.number()),
+      paymentLockedTotalCents: v.optional(v.number()),
+      // Total provider-confirmed refunds for the whole order, including any
+      // seller fulfillment fees. Never allowed to exceed totalCents.
+      refundedAmountCents: v.optional(v.number()),
     }).index("by_buyer", ["buyerId"]),
 
     orderItems: defineTable({
@@ -357,6 +365,13 @@ const schema = defineSchema(
         ),
       ),
       refundedAmountCents: v.optional(v.number()),
+      // Portion of refundedAmountCents that was a seller fulfillment fee. Fees
+      // are only refunded once every line for that seller on the order is
+      // refunded, so they are tracked separately from merchandise.
+      refundedFeeCents: v.optional(v.number()),
+      // A refund accepted by Stripe but not settled yet. Reserving it prevents
+      // concurrent admin actions from refunding the same money twice.
+      pendingRefundAmountCents: v.optional(v.number()),
       // Set once Stripe confirms a transfer of this line's seller proceeds.
       stripeTransferId: v.optional(v.string()),
     })
@@ -482,6 +497,9 @@ const schema = defineSchema(
         v.literal("failed"),
       ),
       providerTransferId: v.optional(v.string()),
+      // Cumulative amount Stripe reports as reversed. A partial reversal keeps
+      // the payout paid for the remainder; a full reversal marks it reversed.
+      reversedAmountCents: v.optional(v.number()),
       note: v.optional(v.string()),
       createdAt: v.number(),
       confirmedAt: v.optional(v.number()),

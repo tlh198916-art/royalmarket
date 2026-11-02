@@ -73,6 +73,7 @@ type SellerEarnings = {
   payouts: {
     _id: Id<"payouts">;
     amountCents: number;
+    reversedAmountCents: number;
     provider: "stripe" | "manual";
     status: "pending" | "in_transit" | "paid" | "reversed" | "failed";
     /** True only for provider-confirmed Stripe payouts. */
@@ -87,6 +88,7 @@ type SellerEarnings = {
     title: string;
     quantity: number;
     grossCents: number;
+    refundedCents: number;
     feeCents: number;
     commissionCents: number;
     netCents: number;
@@ -153,7 +155,30 @@ export const sellerEarnings = query({
     let commissionTotalCents = 0;
     let deliveredCount = 0;
     let pendingCount = 0;
-    const feeCounted = new Set<Id<"orders">>();
+    // Remaining seller-set fee per order, after any fee refunds. The fee is
+    // added once to the first still-paid line, never once per item.
+    const feeRemainingByOrder = new Map<Id<"orders">, number>();
+    for (const item of items) {
+      const order = orders.get(item.orderId);
+      if (!order) continue;
+      const key = order._id;
+      if (!feeRemainingByOrder.has(key)) {
+        const sellerFeeCents =
+          order.fulfillments?.find((f) => f.sellerId === user._id)?.feeCents ??
+          0;
+        const refundedFeeCents = items
+          .filter(
+            (candidate) =>
+              candidate.orderId === order._id &&
+              candidate.sellerId === user._id,
+          )
+          .reduce((sum, candidate) => sum + (candidate.refundedFeeCents ?? 0), 0);
+        feeRemainingByOrder.set(
+          key,
+          Math.max(0, sellerFeeCents - refundedFeeCents),
+        );
+      }
+    }
     const sales: SellerEarnings["sales"] = [];
 
     for (const item of items) {
@@ -162,29 +187,44 @@ export const sellerEarnings = query({
       deliveredCount += 1;
 
       const grossCents = item.priceCents * item.quantity;
+      const refundedAmountCents = Math.min(
+        grossCents,
+        Math.max(0, item.refundedAmountCents ?? 0),
+      );
+      const refundedFeeCents = Math.min(
+        refundedAmountCents,
+        Math.max(0, item.refundedFeeCents ?? 0),
+      );
+      const refundedMerchandiseCents = Math.max(
+        0,
+        refundedAmountCents - refundedFeeCents,
+      );
+      const netMerchandiseCents = Math.max(
+        0,
+        grossCents - refundedMerchandiseCents,
+      );
       const commissionRow = ledgerByItem.get(item._id);
       const commissionCentsForItem =
         commissionRow && commissionRow.status !== "reversed"
           ? commissionRow.amountCents
           : 0;
       const paymentStatus = itemPaymentStatus(item);
-      // The seller-set fulfillment fee is charged once per seller per order,
-      // matching checkout math — never once per line item. A fully refunded
-      // order never contributes the fee to earnings.
       let feeCents = 0;
-      if (!feeCounted.has(order._id) && paymentStatus !== "refunded") {
-        feeCents =
-          order.fulfillments?.find((f) => f.sellerId === user._id)?.feeCents ??
-          0;
-        feeCounted.add(order._id);
+      if (paymentStatus === "paid" && netMerchandiseCents > 0) {
+        feeCents = feeRemainingByOrder.get(order._id) ?? 0;
+        feeRemainingByOrder.set(order._id, 0);
       }
-      const netCents = Math.max(0, grossCents + feeCents - commissionCentsForItem);
+      const netCents = Math.max(
+        0,
+        netMerchandiseCents + feeCents - commissionCentsForItem,
+      );
 
-      grossDeliveredCents += grossCents;
+      grossDeliveredCents += netMerchandiseCents;
       commissionTotalCents += commissionCentsForItem;
+      refundedCents += refundedAmountCents;
 
       if (paymentStatus === "refunded") {
-        refundedCents += grossCents;
+        // Fully refunded lines contribute no remaining earnings.
       } else if (paymentStatus === "paid") {
         if (order.paymentMethod === "cod") collectedCashCents += netCents;
         else cardPaidCents += netCents;
@@ -198,6 +238,7 @@ export const sellerEarnings = query({
         title: item.title,
         quantity: item.quantity,
         grossCents,
+        refundedCents: refundedAmountCents,
         feeCents,
         commissionCents: commissionCentsForItem,
         netCents,
@@ -217,7 +258,9 @@ export const sellerEarnings = query({
       (payout) => payout.status === "pending" || payout.status === "in_transit",
     );
     const paidOutCents = confirmedPayouts.reduce(
-      (sum, payout) => sum + payout.amountCents,
+      (sum, payout) =>
+        sum +
+        Math.max(0, payout.amountCents - (payout.reversedAmountCents ?? 0)),
       0,
     );
     const inTransitCents = inFlightPayouts.reduce(
@@ -253,6 +296,7 @@ export const sellerEarnings = query({
       payouts: payoutRows.map((payout) => ({
         _id: payout._id,
         amountCents: payout.amountCents,
+        reversedAmountCents: payout.reversedAmountCents ?? 0,
         provider: payout.provider,
         status: payout.status,
         confirmed: payout.provider === "stripe" && payout.status === "paid",
@@ -340,6 +384,7 @@ export const adminRefundItem = mutation({
     await ctx.db.patch(item._id, {
       paymentStatus: "refunded",
       refundedAt: Date.now(),
+      refundedAmountCents: item.priceCents * item.quantity,
       refundNote: args.note?.trim().slice(0, 300) || undefined,
     });
     await reverseCommission(ctx, item._id, "Refund recorded by admin.");
@@ -374,18 +419,27 @@ export const adminOverview = query({
 
     for (const item of items) {
       const gross = item.priceCents * item.quantity;
+      const refundedAmount = Math.min(
+        gross,
+        Math.max(0, item.refundedAmountCents ?? 0),
+      );
+      const refundedFee = Math.min(
+        refundedAmount,
+        Math.max(0, item.refundedFeeCents ?? 0),
+      );
+      const netGross = Math.max(0, gross - (refundedAmount - refundedFee));
       const status = itemPaymentStatus(item);
       const order = orderById.get(item.orderId);
+      refundedCents += refundedAmount;
       if (status === "paid") {
         paidCount += 1;
-        if (order?.paymentMethod === "card") cardCollectedCents += gross;
-        else cashCollectedCents += gross;
+        if (order?.paymentMethod === "card") cardCollectedCents += netGross;
+        else cashCollectedCents += netGross;
       } else if (status === "refunded") {
         refundedCount += 1;
-        refundedCents += gross;
       } else if (item.status === "delivered") {
         awaitingCount += 1;
-        awaitingCents += gross;
+        awaitingCents += netGross;
       }
     }
 
@@ -429,25 +483,97 @@ export const adminOverview = query({
       }),
     );
 
-    // Recent delivered payments, so admins can see and refund individual
-    // items without guessing at order-level totals.
+    // Refundable card payments are shown regardless of delivery status. A
+    // paid card charge can need a refund before the seller ever marks the line
+    // delivered, so filtering this table by `status: delivered` hid real
+    // refundable money. Cash rows still appear only after delivery.
     const recentPaymentItems = await Promise.all(
       items
-        .filter((item) => item.status === "delivered")
-        .slice(0, 12)
+        .filter((item) => {
+          const order = orderById.get(item.orderId);
+          if (order?.paymentMethod === "card") {
+            return (
+              item.paymentStatus === "paid" || item.paymentStatus === "refunded"
+            );
+          }
+          return item.status === "delivered";
+        })
+        .slice(0, 20)
         .map(async (item) => {
           const seller = await ctx.db.get(item.sellerId);
+          const order = orderById.get(item.orderId);
+          const sellerItems = items.filter(
+            (candidate) =>
+              candidate.orderId === item.orderId &&
+              candidate.sellerId === item.sellerId,
+          );
+          const grossCents = item.priceCents * item.quantity;
+          const refundedAmountCents = Math.min(
+            grossCents,
+            Math.max(0, item.refundedAmountCents ?? 0),
+          );
+          const refundedFeeCents = Math.min(
+            refundedAmountCents,
+            Math.max(0, item.refundedFeeCents ?? 0),
+          );
+          const merchandiseRemainingCents = Math.max(
+            0,
+            grossCents - (refundedAmountCents - refundedFeeCents),
+          );
+          const otherSellerItemsRefunded = sellerItems.every(
+            (candidate) =>
+              candidate._id === item._id ||
+              (candidate.refundedAmountCents ?? 0) -
+                (candidate.refundedFeeCents ?? 0) >=
+                candidate.priceCents * candidate.quantity,
+          );
+          const sellerFeeCents =
+            order?.fulfillments?.find((f) => f.sellerId === item.sellerId)
+              ?.feeCents ?? 0;
+          const refundedFeeTotal = sellerItems.reduce(
+            (sum, candidate) => sum + (candidate.refundedFeeCents ?? 0),
+            0,
+          );
+          const feeRemainingCents = otherSellerItemsRefunded
+            ? Math.max(0, sellerFeeCents - refundedFeeTotal)
+            : 0;
+          const capturedRemainingCents = Math.max(
+            0,
+            (order?.totalCents ?? grossCents) -
+              Math.max(
+                order?.refundedAmountCents ?? 0,
+                sellerItems.reduce(
+                  (sum, candidate) =>
+                    sum + (candidate.refundedAmountCents ?? 0),
+                  0,
+                ),
+              ) -
+              sellerItems.reduce(
+                (sum, candidate) =>
+                  sum + (candidate.pendingRefundAmountCents ?? 0),
+                0,
+              ),
+          );
+          const refundableCents =
+            item.paymentStatus === "paid"
+              ? Math.min(
+                  merchandiseRemainingCents + feeRemainingCents,
+                  capturedRemainingCents,
+                )
+              : 0;
           return {
             _id: item._id,
             title: item.title,
+            itemStatus: item.status,
             sellerName: seller?.shopName ?? seller?.name ?? "Seller",
-            grossCents: item.priceCents * item.quantity,
+            grossCents,
+            refundedCents: refundedAmountCents,
+            refundableCents,
             paymentStatus: itemPaymentStatus(item),
             refundStatus: item.refundStatus ?? null,
-            paymentMethod: orderById.get(item.orderId)?.paymentMethod ?? "cod",
+            paymentMethod: order?.paymentMethod ?? "cod",
             orderId: item.orderId,
-            orderPaymentStatus:
-              orderById.get(item.orderId)?.paymentStatus ?? "unpaid",
+            orderPaymentStatus: order?.paymentStatus ?? "unpaid",
             transferId: item.stripeTransferId ?? null,
             paidAt: item.paidAt ?? null,
           };

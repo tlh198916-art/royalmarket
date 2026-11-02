@@ -4,6 +4,9 @@
  * only presence flags, the publishable key, and derived readiness booleans.
  */
 
+/** Development app origin used when the platform injects the backend host. */
+const DEVELOPMENT_APP_ORIGIN = "https://rich-suits-throw.vly.sh";
+
 export type StripeEnv = {
   secretKey?: string;
   publishableKey?: string;
@@ -12,13 +15,34 @@ export type StripeEnv = {
   siteUrl?: string;
 };
 
+function isConvexHost(raw: string | undefined): boolean {
+  if (!raw?.trim()) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return host.endsWith(".convex.site") || host.endsWith(".convex.cloud");
+  } catch {
+    return false;
+  }
+}
+
 export function readStripeEnv(): StripeEnv {
+  const configuredSiteUrl = process.env.SITE_URL;
+  // The development host environment can re-inject the Convex backend URL as
+  // SITE_URL. In development, use the known app origin for that one known-bad
+  // value rather than letting hosted onboarding and card returns break. The
+  // strict siteBaseUrl guard below still rejects Convex hosts supplied by any
+  // other path, and production never substitutes a different origin.
+  const siteUrl =
+    (configuredSiteUrl === undefined || isConvexHost(configuredSiteUrl)) &&
+    process.env.NODE_ENV !== "production"
+      ? DEVELOPMENT_APP_ORIGIN
+      : configuredSiteUrl;
   return {
     secretKey: process.env.STRIPE_SECRET_KEY,
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
     connectWebhookSecret: process.env.STRIPE_CONNECT_WEBHOOK_SECRET,
-    siteUrl: process.env.SITE_URL,
+    siteUrl,
   };
 }
 
@@ -126,6 +150,10 @@ export type TransferLine = {
   quantity: number;
   status: string;
   paymentStatus?: string;
+  /** Provider-confirmed refund attributed to this line, including any fee. */
+  refundedAmountCents?: number;
+  /** Portion of refundedAmountCents that was a seller fulfillment fee. */
+  refundedFeeCents?: number;
   commissionCents: number;
 };
 
@@ -156,7 +184,22 @@ export function computeSellerTransfer(
   for (const item of items) {
     if (item.status !== "delivered") continue;
     if ((item.paymentStatus ?? "unpaid") !== "paid") continue;
-    grossCents += item.priceCents * item.quantity;
+    const merchandiseCents = Math.max(
+      0,
+      Math.round(item.priceCents * item.quantity),
+    );
+    const refundedMerchandiseCents = Math.max(
+      0,
+      Math.round(
+        (item.refundedAmountCents ?? 0) - (item.refundedFeeCents ?? 0),
+      ),
+    );
+    const remainingCents = Math.max(
+      0,
+      merchandiseCents - refundedMerchandiseCents,
+    );
+    if (remainingCents === 0) continue;
+    grossCents += remainingCents;
     commissionCents += Math.max(0, Math.round(item.commissionCents));
     itemCount += 1;
   }

@@ -19,7 +19,7 @@ import { defineTestApp } from "convex-test";
  */
 
 const app = defineTestApp({ schema });
-const { internal, createTest } = app.defineModules({
+const { api, internal, createTest } = app.defineModules({
   admin,
   commissions,
   orders,
@@ -74,9 +74,15 @@ type CardOrderArgs = {
   quantity?: number;
   priceCents?: number;
   feeCents?: number;
-  paymentStatus?: "unpaid" | "processing" | "paid" | "failed";
-  itemStatus?: "placed" | "delivered";
-  itemPaymentStatus?: "unpaid" | "paid";
+  paymentStatus?:
+    | "unpaid"
+    | "processing"
+    | "paid"
+    | "partially_refunded"
+    | "refunded"
+    | "failed";
+  itemStatus?: "placed" | "shipped" | "delivered" | "cancelled";
+  itemPaymentStatus?: "unpaid" | "paid" | "refunded" | "failed";
 };
 
 /** Insert a card order + one line directly, bypassing checkout. */
@@ -287,6 +293,83 @@ describe("payment intent webhook application", () => {
     const item = await t.run((ctx) => ctx.db.get(itemId));
     expect(item?.paymentStatus).toBe("failed");
   });
+
+  test("a resolved payment event cannot revive a cancelled order", async () => {
+    const t = createTest();
+    const seller = await newUser(t, { seller: true });
+    const buyer = await newUser(t);
+    const product = await insertProduct(t, seller);
+    const { orderId, itemId, totalCents } = await insertCardOrder(t, {
+      sellerId: seller,
+      buyerId: buyer,
+      productId: product,
+      paymentStatus: "processing",
+    });
+    await t.run((ctx) =>
+      ctx.db.patch(orderId, {
+        status: "cancelled",
+        paymentLockedAt: Date.now(),
+        paymentLockedTotalCents: totalCents,
+        stripePaymentIntentId: "pi_cancelled",
+      }),
+    );
+
+    const result = await t.mutation(internal.stripeSync.paymentSucceeded, {
+      eventId: "evt_late_success",
+      orderId,
+      paymentIntentId: "pi_cancelled",
+      amountCents: totalCents,
+      currency: "usd",
+    });
+    expect(result).toMatchObject({
+      applied: false,
+      reason: "cancelled_order",
+    });
+    expect((await t.run((ctx) => ctx.db.get(orderId)))?.paymentStatus).toBe(
+      "processing",
+    );
+    expect((await t.run((ctx) => ctx.db.get(itemId)))?.paymentStatus).toBe(
+      "unpaid",
+    );
+  });
+
+  test("fulfillment terms cannot change after a PaymentIntent is attached", async () => {
+    const t = createTest();
+    const seller = await newUser(t, { seller: true });
+    const buyer = await newUser(t);
+    const product = await insertProduct(t, seller);
+    const { orderId, totalCents } = await insertCardOrder(t, {
+      sellerId: seller,
+      buyerId: buyer,
+      productId: product,
+      paymentStatus: "processing",
+    });
+    await t.run((ctx) =>
+      ctx.db.patch(orderId, {
+        stripePaymentIntentId: "pi_locked_total",
+        paymentLockedAt: Date.now(),
+        paymentLockedTotalCents: totalCents,
+      }),
+    );
+
+    await expect(
+      as(t, buyer).mutation(api.orders.setFulfillment, {
+        orderId,
+        sellerId: seller,
+        method: "meetup",
+      }),
+    ).rejects.toThrow(/locked/i);
+
+    await expect(
+      t.mutation(internal.stripeSync.paymentSucceeded, {
+        eventId: "evt_changed_total",
+        orderId,
+        paymentIntentId: "pi_locked_total",
+        amountCents: totalCents + 1,
+        currency: "usd",
+      }),
+    ).rejects.toThrow(/does not match/i);
+  });
 });
 
 describe("Connect account synchronisation", () => {
@@ -495,6 +578,45 @@ describe("seller transfers and payout confirmation", () => {
     const paid = await t.run((ctx) => ctx.db.get(recorded.payoutId!));
     expect(paid?.confirmedAt).toBeGreaterThan(0);
 
+    const duplicate = await t.mutation(
+      internal.stripeSync.transferConfirmed,
+      {
+        eventId: "evt_transfer_created",
+        type: "transfer.created",
+        transferId: "tr_test_1",
+        amountCents: 10_000,
+        currency: "usd",
+        reversed: false,
+      },
+    );
+    expect(duplicate).toMatchObject({ applied: false, reason: "duplicate" });
+
+    const partial = await t.mutation(
+      internal.stripeSync.transferConfirmed,
+      {
+        eventId: "evt_transfer_partial_reversal",
+        type: "transfer.updated",
+        transferId: "tr_test_1",
+        amountCents: 10_000,
+        currency: "usd",
+        reversed: false,
+        reversedAmountCents: 4_000,
+      },
+    );
+    expect(partial).toMatchObject({
+      applied: true,
+      status: "paid",
+      reversedAmountCents: 4_000,
+    });
+    const partiallyReversed = await t.run((ctx) =>
+      ctx.db.get(recorded.payoutId!),
+    );
+    expect(partiallyReversed?.status).toBe("paid");
+    expect(partiallyReversed?.reversedAmountCents).toBe(4_000);
+    expect(
+      (await t.run((ctx) => ctx.db.get(itemId)))?.stripeTransferId,
+    ).toBe("tr_test_1");
+
     const reversed = await t.mutation(
       internal.stripeSync.transferConfirmed,
       {
@@ -504,14 +626,38 @@ describe("seller transfers and payout confirmation", () => {
         amountCents: 10_000,
         currency: "usd",
         reversed: true,
+        reversedAmountCents: 10_000,
       },
     );
-    expect(reversed).toMatchObject({ applied: true, status: "reversed" });
+    expect(reversed).toMatchObject({
+      applied: true,
+      status: "reversed",
+      reversedAmountCents: 10_000,
+    });
+    expect(
+      (await t.run((ctx) => ctx.db.get(recorded.payoutId!)))?.status,
+    ).toBe("reversed");
+    expect(
+      (await t.run((ctx) => ctx.db.get(itemId)))?.stripeTransferId,
+    ).toBeUndefined();
   });
 
-  test("an unknown transfer asks Stripe to retry instead of trusting it", async () => {
+  test("an unknown transfer can be applied when the event is retried", async () => {
     const t = createTest();
-    const result = await t.mutation(internal.stripeSync.transferConfirmed, {
+    const seller = await newUser(t, { seller: true });
+    const buyer = await newUser(t);
+    const product = await insertProduct(t, seller);
+    await enableConnect(t, seller);
+    const { orderId, itemId } = await insertCardOrder(t, {
+      sellerId: seller,
+      buyerId: buyer,
+      productId: product,
+      itemStatus: "delivered",
+      itemPaymentStatus: "paid",
+      paymentStatus: "paid",
+    });
+
+    const early = await t.mutation(internal.stripeSync.transferConfirmed, {
       eventId: "evt_missing_transfer",
       type: "transfer.created",
       transferId: "tr_missing",
@@ -519,10 +665,63 @@ describe("seller transfers and payout confirmation", () => {
       currency: "usd",
       reversed: false,
     });
-    expect(result).toMatchObject({
+    expect(early).toMatchObject({
       applied: false,
       reason: "unknown_transfer",
     });
+    expect(
+      await t.run((ctx) =>
+        ctx.db
+          .query("stripeWebhookEvents")
+          .withIndex("by_eventId", (s) => s.eq("eventId", "evt_missing_transfer"))
+          .first(),
+      ),
+    ).toBeNull();
+
+    await t.mutation(internal.stripeSync.recordTransfer, {
+      orderId,
+      sellerId: seller,
+      transferId: "tr_missing",
+      amountCents: 10_000,
+      itemIds: [itemId],
+    });
+    const retried = await t.mutation(internal.stripeSync.transferConfirmed, {
+      eventId: "evt_missing_transfer",
+      type: "transfer.created",
+      transferId: "tr_missing",
+      amountCents: 10_000,
+      currency: "usd",
+      reversed: false,
+    });
+    expect(retried).toMatchObject({ applied: true, status: "paid" });
+  });
+
+  test("a seller cannot record another seller's lines as a payout", async () => {
+    const t = createTest();
+    const seller = await newUser(t, { seller: true });
+    const otherSeller = await newUser(t, { seller: true });
+    const buyer = await newUser(t);
+    const product = await insertProduct(t, seller);
+    const { orderId, itemId } = await insertCardOrder(t, {
+      sellerId: seller,
+      buyerId: buyer,
+      productId: product,
+      itemStatus: "delivered",
+      itemPaymentStatus: "paid",
+      paymentStatus: "paid",
+    });
+
+    const result = await t.mutation(internal.stripeSync.recordTransfer, {
+      orderId,
+      sellerId: otherSeller,
+      transferId: "tr_wrong_seller",
+      amountCents: 10_000,
+      itemIds: [itemId],
+    });
+    expect(result).toMatchObject({ payoutId: null, duplicate: true });
+    expect(await t.run((ctx) => ctx.db.query("payouts").collect())).toHaveLength(
+      0,
+    );
   });
 });
 
@@ -556,15 +755,23 @@ describe("refund reconciliation", () => {
     const applied = await t.mutation(internal.stripeSync.refundSucceeded, {
       itemId,
       refundId: "re_test_1",
-      amountCents: 10_000,
+      amountCents: 10_500,
     });
-    expect(applied).toMatchObject({ applied: true, partial: false });
+    expect(applied).toMatchObject({
+      applied: true,
+      partial: false,
+      merchandiseCents: 10_000,
+      feeCents: 500,
+    });
 
     const item = await t.run((ctx) => ctx.db.get(itemId));
     expect(item?.paymentStatus).toBe("refunded");
     expect(item?.refundStatus).toBe("succeeded");
+    expect(item?.refundedAmountCents).toBe(10_500);
+    expect(item?.refundedFeeCents).toBe(500);
     const order = await t.run((ctx) => ctx.db.get(orderId));
     expect(order?.paymentStatus).toBe("refunded");
+    expect(order?.refundedAmountCents).toBe(10_500);
     const ledger = await t.run((ctx) =>
       ctx.db
         .query("commissionLedger")
@@ -576,12 +783,12 @@ describe("refund reconciliation", () => {
     const replay = await t.mutation(internal.stripeSync.refundSucceeded, {
       itemId,
       refundId: "re_test_1",
-      amountCents: 10_000,
+      amountCents: 10_500,
     });
     expect(replay).toMatchObject({ applied: false, reason: "duplicate" });
   });
 
-  test("a partial refund is recorded without pretending the line is refunded", async () => {
+  test("a partial refund marks the order partially refunded but leaves the line paid", async () => {
     const t = createTest();
     const seller = await newUser(t, { seller: true });
     const buyer = await newUser(t);
@@ -604,7 +811,103 @@ describe("refund reconciliation", () => {
     expect(item?.paymentStatus).toBe("paid");
     expect(item?.refundedAmountCents).toBe(2_500);
     const order = await t.run((ctx) => ctx.db.get(orderId));
-    expect(order?.paymentStatus).toBe("paid");
+    expect(order?.paymentStatus).toBe("partially_refunded");
+    expect(order?.refundedAmountCents).toBe(2_500);
+
+    await expect(
+      t.mutation(internal.stripeSync.refundSucceeded, {
+        itemId,
+        refundId: "re_partial_too_much",
+        amountCents: 8_001,
+      }),
+    ).rejects.toThrow(/refundable balance/i);
+  });
+
+  test("a refund covering the final seller line includes the fulfillment fee once", async () => {
+    const t = createTest();
+    const adminUser = await newUser(t, { role: "admin" });
+    const seller = await newUser(t, { seller: true });
+    const buyer = await newUser(t);
+    const product = await insertProduct(t, seller);
+    const { orderId, itemId } = await insertCardOrder(t, {
+      sellerId: seller,
+      buyerId: buyer,
+      productId: product,
+      feeCents: 700,
+      itemStatus: "delivered",
+      itemPaymentStatus: "paid",
+      paymentStatus: "paid",
+    });
+
+    await t.run((ctx) =>
+      ctx.db.patch(orderId, { stripePaymentIntentId: "pi_with_fee" }),
+    );
+    const context = await as(t, adminUser).query(
+      internal.stripeSync.refundContext,
+      { itemId },
+    );
+    expect(context).toMatchObject({
+      merchandiseCents: 10_000,
+      feeCents: 700,
+      amountCents: 10_700,
+    });
+
+    const result = await t.mutation(internal.stripeSync.refundSucceeded, {
+      itemId,
+      refundId: "re_with_fee",
+      amountCents: 10_700,
+    });
+    expect(result).toMatchObject({ feeCents: 700, partial: false });
+    const order = await t.run((ctx) => ctx.db.get(orderId));
+    expect(order?.paymentStatus).toBe("refunded");
+    expect(order?.refundedAmountCents).toBe(10_700);
+  });
+
+  test("seller transfer math subtracts partial refunds and the matching commission", async () => {
+    const t = createTest();
+    const adminUser = await newUser(t, { role: "admin" });
+    const seller = await newUser(t, { seller: true });
+    const buyer = await newUser(t);
+    const product = await insertProduct(t, seller);
+    await enableConnect(t, seller);
+    const { orderId, itemId } = await insertCardOrder(t, {
+      sellerId: seller,
+      buyerId: buyer,
+      productId: product,
+      feeCents: 500,
+      itemStatus: "delivered",
+      itemPaymentStatus: "paid",
+      paymentStatus: "paid",
+    });
+    await t.run((ctx) =>
+      ctx.db.insert("commissionLedger", {
+        sellerId: seller,
+        orderId,
+        orderItemId: itemId,
+        planId: "starter",
+        baseCents: 10_000,
+        commissionBps: 500,
+        amountCents: 500,
+        status: "pending",
+        occurredAt: Date.now(),
+      }),
+    );
+
+    await t.mutation(internal.stripeSync.refundSucceeded, {
+      itemId,
+      refundId: "re_partial_transfer",
+      amountCents: 2_500,
+    });
+    const plan = await as(t, adminUser).query(
+      internal.stripeSync.transferContext,
+      { orderId },
+    );
+    expect(plan.sellers[0]).toMatchObject({
+      grossCents: 7_500,
+      feeCents: 500,
+      commissionCents: 375,
+      amountCents: 7_625,
+    });
   });
 
   test("a failed refund leaves the payment paid", async () => {

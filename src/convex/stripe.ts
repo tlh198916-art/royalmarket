@@ -184,10 +184,12 @@ export const createPaymentIntent = action({
       if (existing.status === "succeeded") {
         throw new Error("Stripe already confirmed this payment.");
       }
-      if (
-        existing.client_secret &&
-        existing.status !== "canceled"
-      ) {
+      if (existing.amount !== context.amountCents) {
+        throw new Error(
+          "The existing Stripe payment amount does not match this order. Contact support before retrying.",
+        );
+      }
+      if (existing.client_secret && existing.status !== "canceled") {
         return { clientSecret: existing.client_secret };
       }
     }
@@ -212,12 +214,52 @@ export const createPaymentIntent = action({
       throw new Error("Stripe did not return a client secret.");
     }
 
-    await ctx.runMutation(internal.stripeSync.attachPaymentIntent, {
-      orderId: context.orderId,
-      paymentIntentId: intent.id,
-      attempt,
-    });
+    try {
+      await ctx.runMutation(internal.stripeSync.attachPaymentIntent, {
+        orderId: context.orderId,
+        paymentIntentId: intent.id,
+        attempt,
+      });
+    } catch (error) {
+      // The order may have been cancelled between creating the intent and
+      // attaching it. Never leave an orphaned intent chargeable.
+      await stripe.paymentIntents.cancel(intent.id).catch(() => undefined);
+      throw error;
+    }
     return { clientSecret: intent.client_secret };
+  },
+});
+
+/**
+ * Buyer cancellation for card orders. Stripe's PaymentIntent is cancelled
+ * before the local order is closed, so an authorized charge cannot settle
+ * against an order that was already marked cancelled.
+ */
+export const cancelOrder = action({
+  args: { orderId: v.string() },
+  handler: async (ctx, args) => {
+    const context = await ctx.runQuery(internal.stripeSync.cancelContext, {
+      orderId: args.orderId,
+    });
+    if (context.paymentIntentId) {
+      const stripe = stripeClient();
+      const intent = await stripe.paymentIntents.retrieve(
+        context.paymentIntentId,
+      );
+      if (intent.status === "succeeded") {
+        throw new Error(
+          "Stripe has already confirmed this payment, so the order cannot be cancelled. Contact support for a refund.",
+        );
+      }
+      if (intent.status !== "canceled") {
+        await stripe.paymentIntents.cancel(context.paymentIntentId);
+      }
+    }
+    await ctx.runMutation(internal.orders.cancelConfirmed, {
+      orderId: context.orderId,
+      buyerId: context.buyerId,
+    });
+    return { cancelled: true };
   },
 });
 
@@ -313,18 +355,31 @@ export const releaseOrderFunds = action({
 
 /** Admin issues a provider-backed refund for one paid card line. */
 export const refundItem = action({
-  args: { itemId: v.string(), note: v.optional(v.string()) },
+  args: {
+    itemId: v.string(),
+    note: v.optional(v.string()),
+    amountCents: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     await callerIsAdmin(ctx);
     const context = await ctx.runQuery(internal.stripeSync.refundContext, {
       itemId: args.itemId,
     });
+    const amountCents = args.amountCents ?? context.amountCents;
+    if (!Number.isInteger(amountCents) || amountCents <= 0) {
+      throw new Error("Enter a whole number of cents greater than zero.");
+    }
+    if (amountCents > context.amountCents) {
+      throw new Error(
+        `The maximum refundable amount is ${context.amountCents}¢.`,
+      );
+    }
     const stripe = stripeClient();
 
     const refund = await stripe.refunds.create(
       {
         payment_intent: context.paymentIntentId,
-        amount: context.amountCents,
+        amount: amountCents,
         metadata: {
           orderItemId: context.itemId,
           orderId: context.orderId,
@@ -332,7 +387,9 @@ export const refundItem = action({
         },
         reverse_transfer: context.transferred,
       },
-      { idempotencyKey: `refund-${context.itemId}` },
+      {
+        idempotencyKey: `refund-${context.itemId}-${context.refundedCents}-${amountCents}`,
+      },
     );
 
     if (refund.status === "failed" || refund.status === "canceled") {
@@ -353,6 +410,7 @@ export const refundItem = action({
     await ctx.runMutation(internal.stripeSync.refundPending, {
       itemId: context.itemId,
       refundId: refund.id,
+      amountCents: refund.amount,
     });
     return { status: "pending" as const, refundId: refund.id };
   },
@@ -489,6 +547,7 @@ export const handleWebhook = internalAction({
             amountCents: transfer.amount,
             currency: transfer.currency,
             reversed: !!transfer.reversed,
+            reversedAmountCents: transfer.amount_reversed ?? 0,
           },
         );
         if (result.reason === "unknown_transfer") {
@@ -532,6 +591,7 @@ export const handleWebhook = internalAction({
             await ctx.runMutation(internal.stripeSync.refundPending, {
               itemId,
               refundId: refund.id,
+              amountCents: refund.amount,
             });
           }
         }
@@ -556,6 +616,7 @@ export const handleWebhook = internalAction({
           await ctx.runMutation(internal.stripeSync.refundPending, {
             itemId,
             refundId: refund.id,
+            amountCents: refund.amount,
           });
         }
         return { received: true };

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
 import { formatDate, formatPrice } from "@/lib/format";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import {
   CheckCircle2,
   Handshake,
@@ -37,7 +37,7 @@ const timeline = ["placed", "shipped", "delivered"] as const;
 
 export default function Orders() {
   const orders = useQuery(api.orders.myOrders);
-  const cancelOrder = useMutation(api.orders.cancel);
+  const cancelOrder = useAction(api.stripe.cancelOrder);
   const [searchParams] = useSearchParams();
   const placedId = searchParams.get("placed");
 
