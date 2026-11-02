@@ -47,7 +47,11 @@ export function connectConfigured(env: StripeEnv = readStripeEnv()): boolean {
   return !!env.secretKey && siteBaseUrl(env) !== null && !liveModeBlocked(env);
 }
 
-/** A trusted absolute origin for Stripe redirects. HTTPS, or localhost in dev. */
+/**
+ * A trusted absolute origin for Stripe redirects. HTTPS, or localhost in dev.
+ * Convex deployment hosts are rejected: those are backend/webhook origins, not
+ * the app origin Stripe should return sellers to.
+ */
 export function siteBaseUrl(env: StripeEnv = readStripeEnv()): string | null {
   const raw = env.siteUrl?.trim();
   if (!raw) return null;
@@ -56,6 +60,10 @@ export function siteBaseUrl(env: StripeEnv = readStripeEnv()): string | null {
     const local =
       url.hostname === "localhost" || url.hostname === "127.0.0.1";
     if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) {
+      return null;
+    }
+    const host = url.hostname.toLowerCase();
+    if (host.endsWith(".convex.site") || host.endsWith(".convex.cloud")) {
       return null;
     }
     return url.origin;

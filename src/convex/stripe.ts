@@ -55,7 +55,7 @@ function requireSiteBase(): string {
   const base = siteBaseUrl();
   if (!base) {
     throw new Error(
-      "Stripe onboarding needs SITE_URL set to your https origin (for example https://your-market.example).",
+      "Stripe onboarding needs SITE_URL set to your public app https origin (for example https://your-market.example), not a Convex backend host.",
     );
   }
   return base;

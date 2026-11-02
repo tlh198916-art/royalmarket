@@ -470,6 +470,18 @@ describe("payout honesty and Stripe readiness", () => {
     expect(insecure.connectAvailable).toBe(false);
     expect(insecure.missing).toContain("SITE_URL");
 
+    // Convex deployment hosts are backend origins, not the app sellers should
+    // return to, so they must not satisfy the Connect redirect requirement.
+    const convexHost = payments.assessStripeReadiness({
+      secretKey: "sk_test_placeholder",
+      publishableKey: "pk_test_placeholder",
+      webhookSecret: "whsec_placeholder",
+      connectWebhookSecret: "whsec_connect_placeholder",
+      siteUrl: "https://flippant-hound-985.convex.site",
+    });
+    expect(convexHost.connectAvailable).toBe(false);
+    expect(convexHost.missing).toContain("SITE_URL");
+
     // Test-mode-first rail: live keys stay blocked until the deployment
     // explicitly opts in, so setup cannot charge a real card by accident.
     const live = payments.assessStripeReadiness({
