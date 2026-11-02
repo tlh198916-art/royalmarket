@@ -187,6 +187,21 @@ describe("enforceAdminEmail migration", () => {
     expect((await t.run((ctx) => ctx.db.get(owner)))?.role).toBe("admin");
   });
 
+  test("demotes a non-retired mailbox that still holds the seat", async () => {
+    const t = createTest();
+    const formerOwner = await newUser(t, {
+      email: "royalmarket-e2e@mailinator.com",
+      role: "admin",
+    });
+    const owner = await newUser(t, { email: ADMIN_EMAIL });
+
+    const result = await t.mutation(internal.admin.enforceAdminEmail, {});
+    expect(result.revoked).toEqual(["royalmarket-e2e@mailinator.com"]);
+    expect(result.granted).toBe(true);
+    expect((await t.run((ctx) => ctx.db.get(formerOwner)))?.role).toBe("user");
+    expect((await t.run((ctx) => ctx.db.get(owner)))?.role).toBe("admin");
+  });
+
   test("does not promote an unverified or missing administrative account", async () => {
     const t = createTest();
     await newUser(t, { email: ADMIN_EMAIL, verified: false });
