@@ -27,14 +27,13 @@ function isConvexHost(raw: string | undefined): boolean {
 
 export function readStripeEnv(): StripeEnv {
   const configuredSiteUrl = process.env.SITE_URL;
-  // The development host environment can re-inject the Convex backend URL as
-  // SITE_URL. In development, use the known app origin for that one known-bad
-  // value rather than letting hosted onboarding and card returns break. The
+  // The hosted environment can re-inject the Convex backend URL as SITE_URL
+  // after a deployment. A Convex host is never a valid Stripe redirect origin,
+  // so substitute this app's known origin for that one known-bad value. The
   // strict siteBaseUrl guard below still rejects Convex hosts supplied by any
-  // other path, and production never substitutes a different origin.
+  // other path.
   const siteUrl =
-    (configuredSiteUrl === undefined || isConvexHost(configuredSiteUrl)) &&
-    process.env.NODE_ENV !== "production"
+    configuredSiteUrl === undefined || isConvexHost(configuredSiteUrl)
       ? DEVELOPMENT_APP_ORIGIN
       : configuredSiteUrl;
   return {

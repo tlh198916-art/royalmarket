@@ -92,18 +92,38 @@ export const createConnectLink = action({
     let accountId = context.accountId;
     if (!accountId) {
       const country = process.env.STRIPE_CONNECT_COUNTRY ?? "US";
-      const account = await stripe.accounts.create(
+      // Current Stripe accounts reject new Accounts v1 creation. Create an
+      // Express account through the v2 API instead; v2 account IDs remain
+      // usable with the v1 retrieve/transfer endpoints used elsewhere here.
+      const account = await stripe.v2.core.accounts.create(
         {
-          type: "express",
-          country,
-          email: context.email ?? undefined,
-          business_type:
-            context.sellerType === "business" ? "company" : "individual",
-          capabilities: {
-            card_payments: { requested: true },
-            transfers: { requested: true },
+          dashboard: "express",
+          contact_email: context.email ?? undefined,
+          display_name: context.name ?? context.email ?? undefined,
+          identity: {
+            country,
+            entity_type:
+              context.sellerType === "business" ? "company" : "individual",
+          },
+          // RoyalMarket uses separate charges and transfers, so sellers only
+          // need the recipient configuration. The merchant configuration is
+          // unnecessary and Stripe's test-mode v2 onboarding rejects it here.
+          configuration: {
+            recipient: {
+              capabilities: {
+                stripe_balance: { stripe_transfers: { requested: true } },
+              },
+            },
+          },
+          defaults: {
+            currency: "usd",
+            responsibilities: {
+              fees_collector: "application",
+              losses_collector: "application",
+            },
           },
           metadata: { sellerId: context.sellerId },
+          include: ["configuration.recipient", "requirements"],
         },
         { idempotencyKey: `connect-account-${context.sellerId}` },
       );
@@ -114,6 +134,9 @@ export const createConnectLink = action({
       });
     }
 
+    // v2-created account IDs remain valid with the v1 hosted onboarding link.
+    // This is required for legacy test-mode platforms, where v2 account links
+    // are limited to sandboxes.
     const link = await stripe.accountLinks.create({
       account: accountId,
       type: context.detailsSubmitted ? "account_update" : "account_onboarding",
