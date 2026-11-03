@@ -1,3 +1,4 @@
+import { appUrl } from "@/lib/site";
 import { useEffect } from "react";
 
 const SITE_NAME = "Royalmarket";
@@ -27,10 +28,7 @@ function upsertLink(rel: string, href: string) {
 }
 
 function absoluteUrl(path: string) {
-  if (/^https?:\/\//.test(path)) return path;
-  const origin =
-    typeof window === "undefined" ? "" : window.location.origin;
-  return `${origin}${path.startsWith("/") ? path : `/${path}`}`;
+  return appUrl(path);
 }
 
 export type PageMeta = {

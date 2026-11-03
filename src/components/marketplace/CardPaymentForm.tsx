@@ -2,6 +2,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getStripe } from "@/lib/stripeClient";
 import { formatPrice } from "@/lib/format";
+import { appUrl } from "@/lib/site";
 import {
   Elements,
   PaymentElement,
@@ -41,7 +42,7 @@ function PaymentForm({
     const { error } = await stripe.confirmPayment({
       elements,
       confirmParams: {
-        return_url: `${window.location.origin}/orders?placed=${orderId}`,
+        return_url: appUrl(`/orders?placed=${orderId}`),
       },
     });
 

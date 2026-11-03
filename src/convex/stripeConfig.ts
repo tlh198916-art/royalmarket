@@ -4,8 +4,8 @@
  * only presence flags, the publishable key, and derived readiness booleans.
  */
 
-/** Development app origin used when the platform injects the backend host. */
-const DEVELOPMENT_APP_ORIGIN = "https://rich-suits-throw.vly.sh";
+/** Official app origin used when the platform injects the backend host. */
+export const PRODUCTION_APP_ORIGIN = "https://royalmarket.freebuff.app";
 
 export type StripeEnv = {
   secretKey?: string;
@@ -25,17 +25,21 @@ function isConvexHost(raw: string | undefined): boolean {
   }
 }
 
-export function readStripeEnv(): StripeEnv {
-  const configuredSiteUrl = process.env.SITE_URL;
+export function resolveStripeSiteUrl(
+  configuredSiteUrl: string | undefined,
+): string {
   // The hosted environment can re-inject the Convex backend URL as SITE_URL
   // after a deployment. A Convex host is never a valid Stripe redirect origin,
-  // so substitute this app's known origin for that one known-bad value. The
+  // so substitute the official app origin for that one known-bad value. The
   // strict siteBaseUrl guard below still rejects Convex hosts supplied by any
   // other path.
-  const siteUrl =
-    configuredSiteUrl === undefined || isConvexHost(configuredSiteUrl)
-      ? DEVELOPMENT_APP_ORIGIN
-      : configuredSiteUrl;
+  return configuredSiteUrl === undefined || isConvexHost(configuredSiteUrl)
+    ? PRODUCTION_APP_ORIGIN
+    : configuredSiteUrl;
+}
+
+export function readStripeEnv(): StripeEnv {
+  const siteUrl = resolveStripeSiteUrl(process.env.SITE_URL);
   return {
     secretKey: process.env.STRIPE_SECRET_KEY,
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,

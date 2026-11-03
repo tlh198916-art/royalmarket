@@ -17,6 +17,7 @@ import { api } from "@/convex/_generated/api";
 import { bpsToPercent } from "@/convex/plans";
 import { useAuth } from "@/hooks/use-auth";
 import { formatDate, formatPrice, initials } from "@/lib/format";
+import { appUrl } from "@/lib/site";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
@@ -369,10 +370,9 @@ export default function SellerDashboard() {
     }
   };
 
-  const referralLink =
-    myReferrals?.code && typeof window !== "undefined"
-      ? `${window.location.origin}/sell?ref=${myReferrals.code}`
-      : null;
+  const referralLink = myReferrals?.code
+    ? appUrl(`/sell?ref=${myReferrals.code}`)
+    : null;
 
   const handleCopyReferral = async () => {
     if (!referralLink) return;

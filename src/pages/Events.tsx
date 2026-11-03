@@ -6,6 +6,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { eventPhase, useCountdown } from "@/hooks/use-countdown";
 import { errorMessage, pluralize } from "@/lib/format";
 import { usePageMeta } from "@/lib/seo";
+import { appUrl } from "@/lib/site";
 import { buildShareLinks } from "@/lib/socialShare";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -114,7 +115,7 @@ function CountdownTiles({ startsAt, endsAt }: { startsAt: number; endsAt: number
 
 /** Copy-link + network share intents. Pure URL logic lives in lib/socialShare. */
 function ShareRow({ title, dateLabel }: { title: string; dateLabel: string }) {
-  const pageUrl = `${window.location.origin}/events`;
+  const pageUrl = appUrl("/events");
   const text = `Join me at Royalmarket's ${title} (${dateLabel}) — a free online kickoff for new sellers.`;
   const links = buildShareLinks(pageUrl, text);
 
