@@ -20,6 +20,58 @@ const sortValidator = v.union(
   v.literal("featured"),
 );
 
+// Test accounts used by the Stripe/E2E harness. Their products stay in the
+// database for auditability but must never surface in public marketplace feeds.
+const INTERNAL_TEST_SELLER_EMAILS = new Set([
+  "royalmarket-e2e@mailinator.com",
+  "e2e-test-royalmarket@example.com",
+]);
+const INTERNAL_TEST_TITLE =
+  /^(?:\[(?:test|e2e|internal)\]|e2e\b|test product\b|test listing\b|stripe test\b|internal test\b|qa test\b)/i;
+
+function isInternalTestSellerEmail(email: string | null | undefined): boolean {
+  const normalized = (email ?? "").trim().toLowerCase();
+  return (
+    INTERNAL_TEST_SELLER_EMAILS.has(normalized) ||
+    normalized.endsWith("@mailinator.com")
+  );
+}
+
+function isInternalTestListingTitle(title: string): boolean {
+  return INTERNAL_TEST_TITLE.test(title.trim());
+}
+
+/** Hide internal test inventory from every public product feed. */
+export async function excludeInternalTestListings(
+  ctx: QueryCtx | MutationCtx,
+  candidates: Doc<"products">[],
+) {
+  if (candidates.length === 0) return candidates;
+  const sellerIds = [...new Set(candidates.map((product) => product.sellerId))];
+  const sellers = await Promise.all(
+    sellerIds.map((sellerId) => ctx.db.get(sellerId)),
+  );
+  const hiddenSellers = new Set(
+    sellerIds.filter((_, index) =>
+      isInternalTestSellerEmail(sellers[index]?.email),
+    ),
+  );
+  return candidates.filter(
+    (product) =>
+      !hiddenSellers.has(product.sellerId) &&
+      !isInternalTestListingTitle(product.title),
+  );
+}
+
+async function isInternalTestListing(
+  ctx: QueryCtx,
+  product: Doc<"products">,
+) {
+  if (isInternalTestListingTitle(product.title)) return true;
+  const seller = await ctx.db.get(product.sellerId);
+  return isInternalTestSellerEmail(seller?.email);
+}
+
 const returnsArgs = v.object({
   accepted: v.boolean(),
   days: v.number(),
@@ -218,6 +270,8 @@ export const list = query({
       ),
     ),
     featuredOnly: v.optional(v.boolean()),
+    // Restrict a feed to listings that can actually be bought right now.
+    availableOnly: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const limit = Math.min(Math.max(args.limit ?? 48, 1), 200);
@@ -271,6 +325,8 @@ export const list = query({
         .take(500);
     }
 
+    candidates = await excludeInternalTestListings(ctx, candidates);
+
     if (args.categoryId) {
       candidates = candidates.filter((p) => p.categoryId === args.categoryId);
     }
@@ -310,7 +366,15 @@ export const list = query({
     }
 
     if (args.featuredOnly) {
-      candidates = candidates.filter((p) => !!p.featuredAt);
+      // "Featured" is advertised as a live-listing section, so zero-stock
+      // items must not appear there even if an admin featured them earlier.
+      candidates = candidates.filter(
+        (p) => !!p.featuredAt && p.quantity > 0,
+      );
+    }
+
+    if (args.availableOnly) {
+      candidates = candidates.filter((p) => p.quantity > 0);
     }
 
     const sorted = applySort(candidates, args.sortBy ?? "newest").slice(
@@ -332,7 +396,8 @@ export const getByIds = query({
       .filter((id): id is Doc<"products">["_id"] => id !== null);
     const docs = await Promise.all(ids.map((id) => ctx.db.get(id)));
     const products = docs.filter((p): p is Doc<"products"> => p !== null);
-    return await Promise.all(products.map((p) => enrich(ctx, p)));
+    const publicProducts = await excludeInternalTestListings(ctx, products);
+    return await Promise.all(publicProducts.map((p) => enrich(ctx, p)));
   },
 });
 
@@ -346,10 +411,14 @@ export const get = query({
     if (!product) return null;
     const viewer = await getUser(ctx);
     const isOwner = viewer?._id === product.sellerId;
+    const viewerIsAdmin = isMarketplaceAdmin(viewer);
+    if (product.status !== "active" && !isOwner && !viewerIsAdmin) {
+      return null;
+    }
     if (
-      product.status !== "active" &&
       !isOwner &&
-      !isMarketplaceAdmin(viewer)
+      !viewerIsAdmin &&
+      (await isInternalTestListing(ctx, product))
     ) {
       return null;
     }

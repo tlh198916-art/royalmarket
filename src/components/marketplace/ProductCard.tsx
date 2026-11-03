@@ -5,7 +5,7 @@ import { CATEGORIES } from "@/convex/categories";
 import { formatPrice } from "@/lib/format";
 import type { ProductCardData } from "@/lib/types";
 import { motion } from "framer-motion";
-import { Sparkles, Star } from "lucide-react";
+import { Sparkles, Star, Store } from "lucide-react";
 import { Link } from "react-router";
 
 // Snapshot of load time so the "Just listed" badge doesn't call impure
@@ -86,6 +86,18 @@ export function ProductCard({
           {product.title}
         </Link>
 
+        {product.seller?.id && sellerName && (
+          <Link
+            to={`/sellers/${product.seller.id}`}
+            title={sellerName}
+            aria-label={`Visit ${sellerName}'s shop`}
+            className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-primary"
+          >
+            <Store className="size-3 shrink-0" aria-hidden="true" />
+            <span className="truncate">{sellerName}</span>
+          </Link>
+        )}
+
         {(product.ratingCount ?? 0) > 0 && product.ratingAverage != null && (
           <p
             className="flex items-center gap-1 text-xs text-muted-foreground"
@@ -97,33 +109,23 @@ export function ProductCard({
           </p>
         )}
 
-        <div className="mt-auto flex items-end justify-between gap-2 pt-2">
-          <div>
-            <p className="text-lg font-bold tracking-tight">
-              {formatPrice(product.priceCents)}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              <span className="capitalize">
-                {(product.condition ?? "good").replace("_", " ")}
-              </span>
-              {" · "}
-              {product.available
-                ? product.quantity <= 5
-                  ? `${product.quantity} left`
-                  : "In stock"
-                : product.status === "removed"
-                  ? "Unavailable"
-                  : "Sold out"}
-            </p>
-          </div>
-          {product.seller?.id && sellerName && (
-            <Link
-              to={`/sellers/${product.seller.id}`}
-              className="max-w-[45%] truncate text-xs text-muted-foreground transition-colors hover:text-primary"
-            >
-              {sellerName}
-            </Link>
-          )}
+        <div className="mt-auto pt-2">
+          <p className="text-lg font-bold tracking-tight">
+            {formatPrice(product.priceCents)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            <span className="capitalize">
+              {(product.condition ?? "good").replace("_", " ")}
+            </span>
+            {" · "}
+            {product.available
+              ? product.quantity <= 5
+                ? `${product.quantity} left`
+                : "In stock"
+              : product.status === "removed"
+                ? "Unavailable"
+                : "Sold out"}
+          </p>
         </div>
 
         {!product.available && (

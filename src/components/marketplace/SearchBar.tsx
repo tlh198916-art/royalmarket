@@ -33,7 +33,7 @@ export function SearchBar({
     <form
       onSubmit={handleSubmit}
       role="search"
-      className={`relative flex items-center ${className}`}
+      className={`relative flex min-w-0 items-center ${className}`}
     >
       <Search
         className={`pointer-events-none absolute left-3.5 text-muted-foreground ${
@@ -43,23 +43,25 @@ export function SearchBar({
       <Input
         value={value}
         onChange={(event) => setValue(event.target.value)}
-        placeholder={large ? "Search products, brands, categories…" : "Search…"}
-        aria-label="Search products"
+        placeholder={large ? "Search products…" : "Search…"}
+        aria-label="Search products, brands and categories"
         autoFocus={autoFocus}
-        className={`w-full rounded-xl border-border/80 bg-card/80 pl-10 pr-28 backdrop-blur ${
+        className={`w-full min-w-0 rounded-xl border-border/80 bg-card/80 pl-10 backdrop-blur ${
           large
-            ? "h-13 py-3 text-base shadow-lg shadow-primary/10 sm:text-lg"
-            : "h-9 pr-24 text-sm"
+            ? "h-13 py-3 pr-14 text-base shadow-lg shadow-primary/10 sm:pr-28 sm:text-lg"
+            : "h-9 pr-24 text-base sm:text-sm"
         }`}
       />
       <Button
         type="submit"
         size={large ? "default" : "sm"}
+        aria-label="Search"
         className={`absolute right-1.5 rounded-lg ${
-          large ? "h-10 px-5" : "h-7 px-3"
+          large ? "h-10 px-3 sm:px-5" : "h-7 px-3"
         }`}
       >
-        Search
+        {large && <Search className="size-4 sm:hidden" aria-hidden="true" />}
+        <span className={large ? "hidden sm:inline" : ""}>Search</span>
       </Button>
     </form>
   );

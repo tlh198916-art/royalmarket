@@ -72,6 +72,8 @@ async function insertProduct(
     status?: "draft" | "active" | "removed";
     title?: string;
     priceCents?: number;
+    quantity?: number;
+    featuredAt?: number;
   } = {},
 ) {
   return await t.run((ctx) =>
@@ -81,12 +83,13 @@ async function insertProduct(
       description: "An internal draft listing description.",
       categoryId: "electronics",
       priceCents: overrides.priceCents ?? 12_500,
-      quantity: 3,
+      quantity: overrides.quantity ?? 3,
       condition: "good",
       imageStorageIds: [],
       returns: { accepted: false, days: 0 },
       fulfillment,
       status: overrides.status ?? "draft",
+      featuredAt: overrides.featuredAt,
       views: 0,
       soldCount: 0,
       moderatorNote: "internal moderation details",
@@ -133,6 +136,75 @@ describe("listing privacy and permissions", () => {
     const cartFetch = await t.query(api.products.getByIds, { ids: [id] });
     expect("moderatorNote" in cartFetch[0]).toBe(false);
     expect("embedding" in cartFetch[0]).toBe(false);
+  });
+
+  test("public feeds hide internal test sellers and test-marked listings", async () => {
+    const t = createTest();
+    const testSeller = await newUser(t, {
+      seller: true,
+      email: "royalmarket-e2e@mailinator.com",
+    });
+    const realSeller = await newUser(t, {
+      seller: true,
+      email: "owner@royalblue.shop",
+    });
+    const testSellerProduct = await insertProduct(t, testSeller, {
+      status: "active",
+      title: "E2E Test Camera — Stripe Test Only",
+    });
+    const markedProduct = await insertProduct(t, realSeller, {
+      status: "active",
+      title: "[TEST] internal sample listing",
+    });
+    const realProduct = await insertProduct(t, realSeller, {
+      status: "active",
+      title: "Canon film camera",
+    });
+
+    const catalog = await t.query(api.products.list, {});
+    expect(catalog.map((p) => p._id)).toEqual([realProduct]);
+    expect(await t.query(api.products.get, { id: testSellerProduct })).toBeNull();
+    expect(await t.query(api.products.get, { id: markedProduct })).toBeNull();
+    expect(
+      (await t.query(api.products.getByIds, {
+        ids: [testSellerProduct, markedProduct, realProduct],
+      })).map((p) => p._id),
+    ).toEqual([realProduct]);
+  });
+
+  test("featured and available-only feeds exclude zero-stock listings", async () => {
+    const t = createTest();
+    const seller = await newUser(t, {
+      seller: true,
+      email: "owner@royalblue.shop",
+    });
+    const liveFeatured = await insertProduct(t, seller, {
+      status: "active",
+      title: "Live featured camera",
+      quantity: 2,
+      featuredAt: Date.now(),
+    });
+    const soldOutFeatured = await insertProduct(t, seller, {
+      status: "active",
+      title: "Sold out featured camera",
+      quantity: 0,
+      featuredAt: Date.now(),
+    });
+    const liveUnfeatured = await insertProduct(t, seller, {
+      status: "active",
+      title: "Live newest camera",
+      quantity: 1,
+    });
+
+    const featured = await t.query(api.products.list, { featuredOnly: true });
+    expect(featured.map((p) => p._id)).toEqual([liveFeatured]);
+    expect(featured.map((p) => p._id)).not.toContain(soldOutFeatured);
+
+    const available = await t.query(api.products.list, { availableOnly: true });
+    expect(available.map((p) => p._id)).toEqual(
+      expect.arrayContaining([liveFeatured, liveUnfeatured]),
+    );
+    expect(available.map((p) => p._id)).not.toContain(soldOutFeatured);
   });
 
   test("another seller cannot edit, publish, or delete a listing", async () => {

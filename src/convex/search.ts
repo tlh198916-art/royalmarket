@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { isValidCategoryId } from "./categories";
-import { enrich } from "./products";
+import { enrich, excludeInternalTestListings } from "./products";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 
@@ -73,9 +73,10 @@ export const hydrateProducts = internalQuery({
     const docs = (
       await Promise.all(ids.map((id) => ctx.db.get(id)))
     ).filter((p): p is Doc<"products"> => p !== null && p.status === "active");
+    const publicDocs = await excludeInternalTestListings(ctx, docs);
     const filtered = args.categoryId
-      ? docs.filter((p) => p.categoryId === args.categoryId)
-      : docs;
+      ? publicDocs.filter((p) => p.categoryId === args.categoryId)
+      : publicDocs;
     return await Promise.all(filtered.map((p) => enrich(ctx, p)));
   },
 });

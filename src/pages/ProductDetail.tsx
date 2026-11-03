@@ -380,6 +380,7 @@ export default function ProductDetail() {
                 imageUrl={activeImage}
                 categoryId={product.categoryId}
                 title={product.title}
+                fit="contain"
               />
               {!purchasable && (
                 <span className="absolute left-4 top-4 rounded-lg bg-background/90 px-3 py-1.5 text-xs font-bold uppercase tracking-wide backdrop-blur">
