@@ -16,7 +16,14 @@ import { api } from "@/convex/_generated/api";
 import { CATEGORIES } from "@/convex/categories";
 import { usePageMeta } from "@/lib/seo";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { PackageX, SearchX, SlidersHorizontal, Sparkles } from "lucide-react";
+import {
+  ArrowRight,
+  PackageX,
+  SearchX,
+  SlidersHorizontal,
+  Sparkles,
+  Store,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
@@ -183,6 +190,14 @@ export default function Catalog() {
     canonicalPath: "/products",
   });
   const isFilteredOut = merged !== undefined && merged.length === 0 && hasFilters;
+  const categoryOnly =
+    !!activeCategory &&
+    !q &&
+    !fulfillment &&
+    !minParam &&
+    !maxParam &&
+    !ratingParam &&
+    !conditionParam;
 
   return (
     <Layout>
@@ -404,7 +419,25 @@ export default function Catalog() {
               <div className="size-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
             </div>
           ) : merged.length === 0 ? (
-            isFilteredOut ? (
+            categoryOnly && activeCategory ? (
+              <EmptyState
+                icon={PackageX}
+                title={`No live ${activeCategory.label.toLowerCase()} listings yet`}
+                description={`This category is ready for its first real listing. Buyers can browse it now, and the first seller gets the whole aisle to themselves — free to join, $0 per listing, 0% commission.`}
+                action={
+                  <Button asChild>
+                    <Link to={`/sell/category/${activeCategory.id}`}>
+                      <Store className="mr-2 size-4" /> Be the first seller
+                    </Link>
+                  </Button>
+                }
+                secondaryAction={
+                  <Button asChild variant="outline">
+                    <Link to="/products">Browse all products</Link>
+                  </Button>
+                }
+              />
+            ) : isFilteredOut ? (
               <EmptyState
                 icon={SearchX}
                 title="No products match those filters"
@@ -427,7 +460,7 @@ export default function Catalog() {
                 }
                 secondaryAction={
                   <Button asChild variant="outline">
-                    <Link to="/sell">See how selling works</Link>
+                    <Link to="/sell/guide">See the first-listing guide</Link>
                   </Button>
                 }
               />
@@ -439,6 +472,30 @@ export default function Catalog() {
                   <ProductCard key={product._id} product={product} index={index} />
                 ))}
               </div>
+              {activeCategory && merged.length <= 3 && (
+                <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-primary/25 bg-primary/[0.05] p-5">
+                  <div className="flex items-start gap-3">
+                    <Store className="mt-0.5 size-5 shrink-0 text-primary" />
+                    <div>
+                      <p className="text-sm font-semibold">
+                        {merged.length === 1
+                          ? "This aisle has one listing — room for more"
+                          : `Only ${merged.length} listings in this aisle`}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        Sell {activeCategory.label.toLowerCase()} free. Add a
+                        real listing and give buyers another option.
+                      </p>
+                    </div>
+                  </div>
+                  <Button asChild size="sm">
+                    <Link to={`/sell/category/${activeCategory.id}`}>
+                      Sell in {activeCategory.label}
+                      <ArrowRight className="ml-1.5 size-3.5" />
+                    </Link>
+                  </Button>
+                </div>
+              )}
               {merged.length >= 60 && (
                 <div className="mt-8 flex justify-center">
                   <Badge variant="secondary" className="px-4 py-2 text-xs">

@@ -131,6 +131,10 @@ export default function Admin() {
   );
   const tickets = useQuery(api.account.listTickets, isAdmin ? {} : "skip");
   const reports = useQuery(api.reports.adminList, isAdmin ? {} : "skip");
+  const recruitment = useQuery(
+    api.admin.recruitmentOverview,
+    isAdmin ? {} : "skip",
+  );
   const referrals = useQuery(
     api.admin.referralOverview,
     isAdmin ? {} : "skip",
@@ -465,6 +469,166 @@ export default function Admin() {
             </div>
           ))}
         </div>
+
+        {/* Seller recruitment */}
+        <section className="mt-6 rounded-2xl border border-border/70 bg-card">
+          <div className="flex items-center gap-2 border-b border-border/70 px-5 py-4">
+            <UserPlus className="size-4 text-primary" />
+            <h2 className="text-sm font-bold tracking-tight">
+              Seller recruitment
+            </h2>
+          </div>
+          {recruitment === undefined ? (
+            <p className="px-5 py-6 text-sm text-muted-foreground">Loading…</p>
+          ) : (
+            <div className="p-5">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  {
+                    label: "Seller registrations",
+                    value: recruitment.registrations,
+                    note: `${recruitment.newRegistrations30Days} in the last 30 days`,
+                    icon: Store,
+                  },
+                  {
+                    label: "Active sellers",
+                    value: recruitment.activeSellers,
+                    note: "At least one live listing",
+                    icon: BadgeCheck,
+                  },
+                  {
+                    label: "Product listings",
+                    value: recruitment.totalListings,
+                    note: `${recruitment.activeListings} live · ${recruitment.listings30Days} added in 30 days`,
+                    icon: Tag,
+                  },
+                  {
+                    label: "Completed sales",
+                    value: recruitment.completedSales,
+                    note: `${recruitment.completedSales30Days} delivered in 30 days`,
+                    icon: PackageCheck,
+                  },
+                ].map((metric) => (
+                  <div
+                    key={metric.label}
+                    className="rounded-xl border border-border/70 bg-background/40 p-4"
+                  >
+                    <metric.icon className="size-4 text-primary" />
+                    <p className="mt-2 text-xl font-bold tracking-tight">
+                      {metric.value}
+                    </p>
+                    <p className="text-xs font-medium">{metric.label}</p>
+                    <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                      {metric.note}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  {
+                    label: "Referral link visits",
+                    value: recruitment.referralVisits,
+                  },
+                  {
+                    label: "Referred shop setups",
+                    value: recruitment.referralShopSetups,
+                  },
+                  {
+                    label: "Active referred sellers",
+                    value: recruitment.activeReferredSellers,
+                  },
+                  {
+                    label: "Sellers with a sale",
+                    value: recruitment.sellersWithSales,
+                  },
+                ].map((metric) => (
+                  <div
+                    key={metric.label}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3.5 py-2.5 text-xs"
+                  >
+                    <span className="text-muted-foreground">
+                      {metric.label}
+                    </span>
+                    <span className="font-bold">{metric.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Newest sellers
+                  </p>
+                  {recruitment.recentSellers.length === 0 ? (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      No seller registrations yet. Recruitment starts as soon as
+                      a verified account opens its free shop.
+                    </p>
+                  ) : (
+                    <ul className="mt-2 divide-y divide-border/70">
+                      {recruitment.recentSellers.map((seller) => (
+                        <li
+                          key={seller._id}
+                          className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium">
+                              {seller.shopName}
+                              {seller.referred && (
+                                <Badge
+                                  variant="outline"
+                                  className="ml-2 text-[9px] text-primary"
+                                >
+                                  referred
+                                </Badge>
+                              )}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {seller.email ?? "No email"} · joined{" "}
+                              {timeAgo(seller.joinedAt)}
+                            </span>
+                          </span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {seller.activeListings} live · {seller.completedSales}{" "}
+                            sold
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Live listings by category
+                  </p>
+                  {recruitment.topCategories.length === 0 ? (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      No live listings yet.
+                    </p>
+                  ) : (
+                    <ul className="mt-2 space-y-2 text-sm">
+                      {recruitment.topCategories.map((category) => (
+                        <li
+                          key={category.categoryId}
+                          className="flex items-center justify-between gap-3"
+                        >
+                          <span className="capitalize text-muted-foreground">
+                            {category.categoryId}
+                          </span>
+                          <span className="font-semibold">
+                            {category.count}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
 
         {/* Conversion metrics */}
         <section className="mt-8 rounded-2xl border border-border/70 bg-card">

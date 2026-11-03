@@ -6,6 +6,34 @@ import { join } from "node:path";
 const read = (relativeToSrc: string) =>
   readFileSync(join(import.meta.dir, "..", relativeToSrc), "utf8");
 
+describe("seller recruitment wiring", () => {
+  test("seller guide, founding seller, and category pages are routed", () => {
+    const src = read("main.tsx");
+    expect(src).toContain(
+      'const FoundingSellers = lazy(() => import("./pages/FoundingSellers.tsx"));',
+    );
+    expect(src).toContain(
+      'path="/founding-sellers" element={<FoundingSellers />}',
+    );
+    expect(src).toContain('path="/sell/guide" element={<SellerGuide />}');
+    expect(src).toContain(
+      'path="/sell/category/:categoryId"',
+    );
+  });
+
+  test("every page carries the free-seller offer strip", () => {
+    expect(read("components/marketplace/Layout.tsx")).toContain(
+      "<SellerInviteBar />",
+    );
+  });
+
+  test("the listing form accepts a category prefill", () => {
+    const src = read("pages/ListingForm.tsx");
+    expect(src).toContain('searchParams.get("category")');
+    expect(src).toContain("categoryId: initialCategory");
+  });
+});
+
 describe("events wiring", () => {
   test("main.tsx lazily routes /events to the Events page", () => {
     const src = read("main.tsx");

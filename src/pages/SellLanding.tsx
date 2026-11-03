@@ -2,7 +2,9 @@ import { Layout } from "@/components/marketplace/Layout";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CATEGORIES } from "@/convex/categories";
 import { useAuth } from "@/hooks/use-auth";
+import { useReferralCapture } from "@/hooks/use-referral-capture";
 import { formatPrice } from "@/lib/format";
 import { usePageMeta } from "@/lib/seo";
 import {
@@ -11,17 +13,19 @@ import {
   Camera,
   CheckCircle2,
   Clock3,
+  Crown,
   Eye,
+  ListChecks,
   HandCoins,
   Handshake,
   PackageCheck,
   Rocket,
   ShieldCheck,
   Store,
+  Tag,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import { useEffect } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 
 const fadeUp = {
   initial: { opacity: 0, y: 22 },
@@ -97,22 +101,8 @@ const faqs = [
 
 export default function SellLanding() {
   const { user, isAuthenticated, isLoading } = useAuth();
-  const [searchParams] = useSearchParams();
-  const referralCode = (searchParams.get("ref") ?? "")
-    .trim()
-    .toUpperCase()
-    .slice(0, 12);
-
-  // Persist the invite through the sign-in round trip; the shop-setup step
-  // credits it once the account opens its storefront.
-  useEffect(() => {
-    if (!referralCode) return;
-    try {
-      window.sessionStorage.setItem("royalmarket.ref", referralCode);
-    } catch {
-      // storage unavailable — invite simply won't be attributed
-    }
-  }, [referralCode]);
+  // Persist the invite through sign-in and record one anonymous link visit.
+  const referralCode = useReferralCapture("sell-landing");
 
   usePageMeta({
     title: "Sell on Royalmarket — free individual seller accounts",
@@ -324,6 +314,73 @@ export default function SellLanding() {
         </div>
       </section>
 
+      {/* Category-specific recruitment */}
+      <section className="border-b border-border/70 bg-card/30 py-14 sm:py-16">
+        <div className="page-container">
+          <motion.div {...fadeUp} className="mx-auto max-w-2xl text-center">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-primary">
+              <Tag className="size-3.5" /> Find your aisle
+            </span>
+            <h2 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">
+              Sell what you already know
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">
+              Pick a category for tailored item ideas, pricing tips, and a
+              listing form that starts in the right aisle.
+            </p>
+          </motion.div>
+          <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {CATEGORIES.map((category) => (
+              <Link
+                key={category.id}
+                to={`/sell/category/${category.id}`}
+                className="group rounded-2xl border border-border/70 bg-card p-4 text-center transition-colors hover:border-primary/50"
+              >
+                <span className="text-2xl" aria-hidden>
+                  {category.emoji}
+                </span>
+                <span className="mt-2 block text-xs font-semibold transition-colors group-hover:text-primary">
+                  {category.label}
+                </span>
+              </Link>
+            ))}
+          </div>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            <Link
+              to="/sell/guide"
+              className="group flex items-start gap-3 rounded-2xl border border-border/70 bg-card p-5 transition-colors hover:border-primary/50"
+            >
+              <ListChecks className="mt-0.5 size-5 shrink-0 text-primary" />
+              <span>
+                <span className="block text-sm font-semibold group-hover:text-primary">
+                  First-listing guide
+                </span>
+                <span className="mt-1 block text-sm leading-6 text-muted-foreground">
+                  Five practical steps for photos, descriptions, pricing, and
+                  publishing your first item.
+                </span>
+              </span>
+            </Link>
+            <Link
+              to="/founding-sellers"
+              className="group flex items-start gap-3 rounded-2xl border border-border/70 bg-card p-5 transition-colors hover:border-primary/50"
+            >
+              <Crown className="mt-0.5 size-5 shrink-0 text-primary" />
+              <span>
+                <span className="block text-sm font-semibold group-hover:text-primary">
+                  Become a Founding Seller
+                </span>
+                <span className="mt-1 block text-sm leading-6 text-muted-foreground">
+                  Join the early sellers, meet the team at the launch event,
+                  and start with a free shop.
+                </span>
+              </span>
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* Fees */}
       <section id="fees" className="scroll-mt-24 border-y border-border/70 bg-card/30 py-14 sm:py-20">
         <div className="page-container">
@@ -342,7 +399,7 @@ export default function SellLanding() {
               </p>
             </div>
             <Button asChild>
-              <Link to="/auth?returnTo=%2Fsell%2Fnew">
+              <Link to={ctaHref}>
                 Start listing free <ArrowRight className="ml-2 size-4" />
               </Link>
             </Button>

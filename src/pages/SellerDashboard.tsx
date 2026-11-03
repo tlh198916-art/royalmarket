@@ -6,6 +6,7 @@ import {
 import { Layout } from "@/components/marketplace/Layout";
 import { OrderMessages } from "@/components/marketplace/OrderMessages";
 import { ProductMedia } from "@/components/marketplace/ProductMedia";
+import { SellerOnboardingChecklist } from "@/components/marketplace/SellerOnboardingChecklist";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +20,7 @@ import { formatDate, formatPrice, initials } from "@/lib/format";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
+  BadgeCheck,
   Banknote,
   CheckCircle2,
   Copy,
@@ -93,6 +95,7 @@ export default function SellerDashboard() {
   const updateProfile = useMutation(api.sellers.updateProfile);
 
   const [filter, setFilter] = useState<StatusFilter>("all");
+  const [activeTab, setActiveTab] = useState("listings");
   const [profileSaving, setProfileSaving] = useState(false);
 
   const stats = useMemo(() => {
@@ -101,12 +104,19 @@ export default function SellerDashboard() {
     const pendingItems = (sellerOrders ?? []).flatMap((order) =>
       order.items.filter((item) => item.status === "placed"),
     );
+    const deliveredUnits = (sellerOrders ?? []).reduce(
+      (sum, order) =>
+        sum +
+        order.items.filter((item) => item.status === "delivered").length,
+      0,
+    );
     return {
       live: active.length,
       drafts: listings.filter((p) => p.status === "draft").length,
       takenDown: listings.filter((p) => p.status === "removed").length,
       views: listings.reduce((sum, p) => sum + (p.views ?? 0), 0),
       soldUnits: listings.reduce((sum, p) => sum + (p.soldCount ?? 0), 0),
+      deliveredUnits,
       openOrders: (sellerOrders ?? []).filter(
         (o) => o.status === "placed" || o.status === "shipped",
       ).length,
@@ -437,6 +447,56 @@ export default function SellerDashboard() {
         </div>
 
         {stats && (
+          <SellerOnboardingChecklist
+            items={[
+              {
+                id: "registered",
+                title: "Seller account created",
+                description: `Free individual account for ${user.email ?? "your verified email"}.`,
+                complete: !!user.isSeller && !!user.emailVerificationTime,
+                icon: BadgeCheck,
+                to: "/dashboard",
+                actionLabel: "Check account verification",
+              },
+              {
+                id: "profile",
+                title: "Complete your shop profile",
+                description:
+                  "Add a bio and location so buyers know who they are buying from.",
+                complete: !!user.shopName && !!user.sellerBio && !!user.location,
+                icon: Store,
+                onClick: () => setActiveTab("profile"),
+                actionLabel: "Edit shop profile",
+              },
+              {
+                id: "listing",
+                title: "Create your first listing",
+                description:
+                  stats.drafts > 0 && stats.live === 0
+                    ? "You have a draft ready. Publish it when the details are right."
+                    : "Add photos, a clear description, price, and stock.",
+                complete: stats.live > 0 || stats.drafts > 0,
+                icon: Tag,
+                to: "/sell/new",
+                actionLabel: "Create a listing",
+              },
+              {
+                id: "sale",
+                title: "Complete your first sale",
+                description:
+                  stats.deliveredUnits > 0
+                    ? `${stats.deliveredUnits} delivered item${stats.deliveredUnits === 1 ? "" : "s"} recorded.`
+                    : "Share your public shop, respond to buyers, and mark orders delivered.",
+                complete: stats.deliveredUnits > 0,
+                icon: PackageCheck,
+                to: `/sellers/${user._id}`,
+                actionLabel: "View and share your shop",
+              },
+            ]}
+          />
+        )}
+
+        {stats && (
           <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {[
               { label: "Live listings", value: stats.live, icon: Tag },
@@ -460,7 +520,7 @@ export default function SellerDashboard() {
           </div>
         )}
 
-        <Tabs defaultValue="listings" className="mt-8">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-8">
           {/* Six tabs overflow a phone-width screen, so the strip scrolls
               horizontally there instead of pushing the page wide. */}
           <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
@@ -1550,12 +1610,39 @@ export default function SellerDashboard() {
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Your code:{" "}
+                      Your unique code:{" "}
                       <span className="font-mono font-semibold text-foreground">
                         {myReferrals.code}
-                      </span>{" "}
-                      · {myReferrals.inviteCount} invited ·{" "}
-                      {myReferrals.activeInvitees} still selling
+                      </span>
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { label: "Link visits", value: myReferrals.visits },
+                        { label: "Shop setups", value: myReferrals.inviteCount },
+                        {
+                          label: "Still selling",
+                          value: myReferrals.activeInvitees,
+                        },
+                      ].map((stat) => (
+                        <div
+                          key={stat.label}
+                          className="rounded-xl border border-border/70 bg-background/40 px-3 py-2.5"
+                        >
+                          <p className="text-lg font-bold">{stat.value}</p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {stat.label}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[11px] leading-5 text-muted-foreground">
+                      {myReferrals.visitsLast30Days} visit
+                      {myReferrals.visitsLast30Days === 1 ? "" : "s"} in the
+                      last 30 days
+                      {myReferrals.conversionRate !== null &&
+                        ` · ${myReferrals.conversionRate.toFixed(1)}% of visits became shop setups`}
+                      . Visits are anonymous and counted once per browser
+                      session.
                     </p>
                   </div>
                 ) : (

@@ -32,7 +32,7 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router";
 
 const navLinks = [
   { to: "/products", label: "Browse" },
-  { to: "/sell", label: "Sell" },
+  { to: "/sell", label: "Sell free" },
   { to: "/events", label: "Events" },
   { to: "/pricing", label: "Pricing" },
   { to: "/support", label: "Support" },

@@ -135,8 +135,14 @@ function ListingFormInner({ editId }: { editId: string | null }) {
   const updateListing = useMutation(api.products.update);
   const generateUploadUrl = useMutation(api.products.generateUploadUrl);
 
+  const [searchParams] = useSearchParams();
+  const requestedCategory = searchParams.get("category") ?? "";
+  const initialCategory = CATEGORIES.some((c) => c.id === requestedCategory)
+    ? requestedCategory
+    : "";
+
   const [form, setForm] = useState<FormState>(() => {
-    if (!existing) return emptyForm;
+    if (!existing) return { ...emptyForm, categoryId: initialCategory };
     return {
       title: existing.title,
       description: existing.description ?? "",
@@ -399,7 +405,7 @@ function ListingFormInner({ editId }: { editId: string | null }) {
   if (shopStep && !user?.isSeller) {
     return (
       <Layout>
-        <div className="page-container max-w-xl py-12">
+        <div className="page-container max-w-4xl py-10 sm:py-14">
           <Badge
             variant="secondary"
             className="border border-primary/30 bg-primary/10 text-primary"
@@ -407,68 +413,121 @@ function ListingFormInner({ editId }: { editId: string | null }) {
             Step 1 of 2 · Shop setup
           </Badge>
           <h1 className="mt-4 text-2xl font-bold tracking-tight sm:text-3xl">
-            Name your shop
+            Open your free shop
           </h1>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Your shop name appears on every listing and on your public seller
-            profile. It&apos;s free and you can change it later.
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            Name your shop and add a short profile. It takes about a minute,
+            costs nothing, and you can change every detail later.
           </p>
 
-          <form onSubmit={handleShopSubmit} className="mt-7 space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="shopName">Shop name *</Label>
-              <Input
-                id="shopName"
-                name="shopName"
-                required
-                minLength={2}
-                maxLength={60}
-                placeholder="e.g. Harbor Vintage Co."
-                defaultValue={user?.shopName ?? ""}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="bio">Short bio</Label>
-              <Textarea
-                id="bio"
-                name="bio"
-                rows={3}
-                maxLength={500}
-                placeholder="What do you sell, and why should buyers trust your shop?"
-                defaultValue={user?.sellerBio ?? ""}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="location">Location</Label>
-              <Input
-                id="location"
-                name="location"
-                maxLength={80}
-                placeholder="City, Country"
-                defaultValue={user?.location ?? ""}
-              />
-            </div>
+          <div className="mt-7 grid gap-6 lg:grid-cols-[1fr_300px]">
+            <form
+              onSubmit={handleShopSubmit}
+              className="rounded-2xl border border-border/70 bg-card p-5 sm:p-6"
+            >
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="shopName">Shop name *</Label>
+                  <Input
+                    id="shopName"
+                    name="shopName"
+                    required
+                    minLength={2}
+                    maxLength={60}
+                    placeholder="e.g. Harbor Vintage Co."
+                    defaultValue={user?.shopName ?? user?.name ?? ""}
+                    autoFocus
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Shown on every listing and your public seller profile.
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="bio">Short bio</Label>
+                  <Textarea
+                    id="bio"
+                    name="bio"
+                    rows={3}
+                    maxLength={500}
+                    placeholder="What do you sell, and why should buyers trust your shop?"
+                    defaultValue={user?.sellerBio ?? ""}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Optional, but it helps buyers understand your shop.
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="location">Location</Label>
+                  <Input
+                    id="location"
+                    name="location"
+                    maxLength={80}
+                    placeholder="City, Country"
+                    defaultValue={user?.location ?? ""}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Optional. Your city or region helps with local pickup.
+                  </p>
+                </div>
 
-            {user && !user.emailVerificationTime && (
-              <p className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs leading-5">
-                Your email isn&apos;t verified yet — verify it from the sign-in
-                screen before listings can go live.
-              </p>
-            )}
+                {user && !user.emailVerificationTime && (
+                  <p className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs leading-5">
+                    Your email isn&apos;t verified yet — verify it from the
+                    sign-in screen before listings can go live.
+                  </p>
+                )}
 
-            <div className="flex gap-3">
-              <Button type="submit" disabled={submitting} className="flex-1">
-                {submitting ? "Saving…" : "Continue to listing"}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setShopStep(false)}
-              >
-                Skip for now
-              </Button>
-            </div>
-          </form>
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <Button
+                    type="submit"
+                    disabled={submitting}
+                    className="flex-1 sm:flex-none"
+                  >
+                    {submitting ? "Saving…" : "Continue to your first listing"}
+                  </Button>
+                  <Button asChild type="button" variant="ghost">
+                    <Link to="/sell">Back to seller overview</Link>
+                  </Button>
+                </div>
+              </div>
+            </form>
+
+            <aside className="space-y-4">
+              <div className="rounded-2xl border border-primary/30 bg-primary/[0.06] p-5">
+                <Store className="size-5 text-primary" />
+                <h2 className="mt-3 text-sm font-bold">Your free shop</h2>
+                <ul className="mt-3 space-y-2 text-xs leading-5">
+                  {[
+                    "$0 to join — no credit card",
+                    "$0 per listing, every time",
+                    "0% marketplace commission",
+                    "Publish real listings instantly",
+                  ].map((item) => (
+                    <li key={item} className="flex items-start gap-2">
+                      <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-400" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="rounded-2xl border border-border/70 bg-card p-5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  What happens next
+                </p>
+                <ol className="mt-3 space-y-2 text-xs leading-5 text-muted-foreground">
+                  <li>1. Add photos and describe your item.</li>
+                  <li>2. Set price, stock, and fulfillment.</li>
+                  <li>3. Publish free — or save a private draft.</li>
+                </ol>
+                <Link
+                  to="/sell/guide"
+                  className="mt-3 inline-flex text-xs font-semibold text-primary hover:underline"
+                >
+                  Open the first-listing guide →
+                </Link>
+              </div>
+            </aside>
+          </div>
         </div>
       </Layout>
     );
@@ -476,6 +535,7 @@ function ListingFormInner({ editId }: { editId: string | null }) {
 
   const priceCents = parsePriceToCents(form.price) ?? 0;
   const category = CATEGORIES.find((c) => c.id === form.categoryId);
+  const isFirstListing = !editId && (myListings?.length ?? 0) === 0;
 
   return (
     <Layout>
@@ -489,9 +549,19 @@ function ListingFormInner({ editId }: { editId: string | null }) {
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-              {editId ? "Edit listing" : "Create a listing"}
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+                {editId ? "Edit listing" : "Create a listing"}
+              </h1>
+              {isFirstListing && (
+                <Badge
+                  variant="secondary"
+                  className="border border-primary/30 bg-primary/10 text-[10px] text-primary"
+                >
+                  Your first listing
+                </Badge>
+              )}
+            </div>
             <p className="mt-1 text-sm text-muted-foreground">
               Free to post · instant publish · no approval queue
             </p>
@@ -517,6 +587,40 @@ function ListingFormInner({ editId }: { editId: string | null }) {
             This listing was taken down by a moderator. You can edit it, but
             only an admin can make it live again — please open a support
             ticket for the reason.
+          </div>
+        )}
+
+        {isFirstListing && (
+          <div className="mt-5 rounded-2xl border border-primary/25 bg-primary/[0.05] p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">
+                  Your first listing, in four checks
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  A useful cover photo, honest details, the right price, and a
+                  fulfillment option you can support.
+                </p>
+              </div>
+              <Button asChild variant="outline" size="sm">
+                <Link to="/sell/guide">Full step-by-step guide</Link>
+              </Button>
+            </div>
+            <ol className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+              {[
+                "1. Add a clear cover photo",
+                "2. Describe the item honestly",
+                "3. Set price, stock, and returns",
+                "4. Publish free — or save a draft",
+              ].map((item) => (
+                <li
+                  key={item}
+                  className="rounded-lg border border-border/60 bg-background/40 px-3 py-2"
+                >
+                  {item}
+                </li>
+              ))}
+            </ol>
           </div>
         )}
 

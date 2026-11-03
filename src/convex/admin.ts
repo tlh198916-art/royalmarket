@@ -350,6 +350,109 @@ export const setFeatured = mutation({
   },
 });
 
+/**
+ * Seller acquisition funnel: who registered, who activated a shop with live
+ * inventory, what they listed, and which sales actually completed. These are
+ * counts from real records only — no estimates or seeded activity.
+ */
+export const recruitmentOverview = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    const cutoff = Date.now() - 30 * DAY;
+    const [users, products, orderItems, referrals, visits] = await Promise.all([
+      ctx.db.query("users").collect(),
+      ctx.db.query("products").collect(),
+      ctx.db.query("orderItems").take(5000),
+      ctx.db.query("referrals").collect(),
+      ctx.db.query("referralVisits").take(5000),
+    ]);
+
+    const sellers = users.filter((user) => !!user.isSeller);
+    const activeProducts = products.filter((p) => p.status === "active");
+    const deliveredItems = orderItems.filter((item) => item.status === "delivered");
+    const activeSellerIds = new Set(
+      activeProducts.map((product) => product.sellerId),
+    );
+    const sellerIdsWithSales = new Set(
+      deliveredItems.map((item) => item.sellerId),
+    );
+    const referredSellerIds = new Set(referrals.map((row) => row.inviteeId));
+
+    const listingsBySeller = new Map<string, number>();
+    for (const product of activeProducts) {
+      listingsBySeller.set(
+        product.sellerId,
+        (listingsBySeller.get(product.sellerId) ?? 0) + 1,
+      );
+    }
+    const salesBySeller = new Map<string, number>();
+    for (const item of deliveredItems) {
+      salesBySeller.set(
+        item.sellerId,
+        (salesBySeller.get(item.sellerId) ?? 0) + 1,
+      );
+    }
+
+    const recentSellers = [...sellers]
+      .sort((a, b) => b._creationTime - a._creationTime)
+      .slice(0, 6)
+      .map((seller) => ({
+        _id: seller._id,
+        shopName: seller.shopName ?? seller.name ?? "Unnamed shop",
+        email: seller.email ?? null,
+        sellerType: seller.sellerType ?? "individual",
+        joinedAt: seller._creationTime,
+        activeListings: listingsBySeller.get(seller._id) ?? 0,
+        completedSales: salesBySeller.get(seller._id) ?? 0,
+        referred: referredSellerIds.has(seller._id),
+      }));
+
+    const categoryCounts = new Map<string, number>();
+    for (const product of activeProducts) {
+      categoryCounts.set(
+        product.categoryId,
+        (categoryCounts.get(product.categoryId) ?? 0) + 1,
+      );
+    }
+    const topCategories = [...categoryCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([categoryId, count]) => ({ categoryId, count }));
+
+    return {
+      registrations: sellers.length,
+      newRegistrations30Days: sellers.filter(
+        (seller) => seller._creationTime >= cutoff,
+      ).length,
+      individualSellers: sellers.filter(
+        (seller) => (seller.sellerType ?? "individual") === "individual",
+      ).length,
+      businessSellers: sellers.filter(
+        (seller) => seller.sellerType === "business",
+      ).length,
+      activeSellers: activeSellerIds.size,
+      sellersWithSales: sellerIdsWithSales.size,
+      totalListings: products.length,
+      activeListings: activeProducts.length,
+      listings30Days: products.filter(
+        (product) => product._creationTime >= cutoff,
+      ).length,
+      completedSales: deliveredItems.length,
+      completedSales30Days: deliveredItems.filter(
+        (item) => item._creationTime >= cutoff,
+      ).length,
+      referralVisits: visits.length,
+      referralShopSetups: referrals.length,
+      activeReferredSellers: referrals.filter((row) =>
+        activeSellerIds.has(row.inviteeId),
+      ).length,
+      topCategories,
+      recentSellers,
+    };
+  },
+});
+
 /** Referral program overview for the admin dashboard. */
 export const referralOverview = query({
   args: {},

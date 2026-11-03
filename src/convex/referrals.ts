@@ -4,6 +4,8 @@ import { getUser, requireVerifiedUser } from "./lib";
 import { mutation, query } from "./_generated/server";
 import { ensureReferralCode } from "./sellers";
 
+const MAX_TRACKED_VISITS = 2000;
+
 /**
  * Seller-to-seller referral program.
  *
@@ -17,11 +19,18 @@ export const myReferrals = query({
     const user = await getUser(ctx);
     if (!user || !user.isSeller) return null;
 
-    const rows = await ctx.db
-      .query("referrals")
-      .withIndex("by_inviter", (s) => s.eq("inviterId", user._id))
-      .order("desc")
-      .take(100);
+    const [rows, visits] = await Promise.all([
+      ctx.db
+        .query("referrals")
+        .withIndex("by_inviter", (s) => s.eq("inviterId", user._id))
+        .order("desc")
+        .take(100),
+      ctx.db
+        .query("referralVisits")
+        .withIndex("by_inviter", (s) => s.eq("inviterId", user._id))
+        .order("desc")
+        .take(MAX_TRACKED_VISITS),
+    ]);
 
     const invites = await Promise.all(
       rows.map(async (row) => {
@@ -44,12 +53,66 @@ export const myReferrals = query({
       }),
     );
 
+    const visitsLast30Days = visits.filter(
+      (visit) => visit._creationTime >= Date.now() - 30 * 24 * 60 * 60 * 1000,
+    ).length;
+
     return {
       code: user.referralCode ?? null,
       inviteCount: rows.length,
       activeInvitees: invites.filter((i) => i.stillSelling).length,
+      totalListings: invites.reduce((sum, invite) => sum + invite.listings, 0),
+      visits: visits.length,
+      visitsLast30Days,
+      // Shop setups ÷ tracked link visits. Small samples are noisy, so the UI
+      // presents this alongside the raw numbers rather than as a promise.
+      conversionRate:
+        visits.length === 0 ? null : (rows.length / visits.length) * 100,
       invites,
     };
+  },
+});
+
+/**
+ * Records one anonymous visit per browser session and invite code. The
+ * visitor key is random and lives in sessionStorage; no IP, email, or user
+ * agent is stored. Signed-in invitees visiting their own link are ignored.
+ */
+export const trackVisit = mutation({
+  args: {
+    code: v.string(),
+    visitorKey: v.string(),
+    source: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const code = args.code.trim().toUpperCase().slice(0, 12);
+    const visitorKey = args.visitorKey.trim().slice(0, 64);
+    if (!code || visitorKey.length < 8) return { tracked: false };
+
+    const inviter = await ctx.db
+      .query("users")
+      .withIndex("by_referral_code", (s) => s.eq("referralCode", code))
+      .first();
+    if (!inviter || !inviter.isSeller) return { tracked: false };
+
+    const viewer = await getUser(ctx);
+    if (viewer?._id === inviter._id) return { tracked: false };
+
+    const duplicate = await ctx.db
+      .query("referralVisits")
+      .withIndex("by_code_visitor", (s) =>
+        s.eq("code", code).eq("visitorKey", visitorKey),
+      )
+      .first();
+    if (duplicate) return { tracked: false };
+
+    await ctx.db.insert("referralVisits", {
+      inviterId: inviter._id,
+      code,
+      visitorKey,
+      source: args.source?.trim().slice(0, 40) || "sell-link",
+    });
+    return { tracked: true };
   },
 });
 

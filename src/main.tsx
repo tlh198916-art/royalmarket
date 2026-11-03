@@ -18,6 +18,9 @@ const Catalog = lazy(() => import("./pages/Catalog.tsx"));
 const ProductDetail = lazy(() => import("./pages/ProductDetail.tsx"));
 const SellerProfile = lazy(() => import("./pages/SellerProfile.tsx"));
 const SellLanding = lazy(() => import("./pages/SellLanding.tsx"));
+const SellerGuide = lazy(() => import("./pages/SellerGuide.tsx"));
+const SellerCategory = lazy(() => import("./pages/SellerCategory.tsx"));
+const FoundingSellers = lazy(() => import("./pages/FoundingSellers.tsx"));
 const Pricing = lazy(() => import("./pages/Pricing.tsx"));
 const SellPlans = lazy(() => import("./pages/SellPlans.tsx"));
 const ListingForm = lazy(() => import("./pages/ListingForm.tsx"));
@@ -140,6 +143,12 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="/products/:id" element={<ProductDetail />} />
                 <Route path="/sellers/:userId" element={<SellerProfile />} />
                 <Route path="/sell" element={<SellLanding />} />
+                <Route path="/sell/guide" element={<SellerGuide />} />
+                <Route
+                  path="/sell/category/:categoryId"
+                  element={<SellerCategory />}
+                />
+                <Route path="/founding-sellers" element={<FoundingSellers />} />
                 <Route path="/pricing" element={<Pricing />} />
                 <Route path="/events" element={<Events />} />
                 <Route path="/sell/plans" element={<SellPlans />} />

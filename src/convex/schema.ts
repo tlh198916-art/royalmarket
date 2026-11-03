@@ -226,6 +226,19 @@ const schema = defineSchema(
       .index("by_inviter", ["inviterId"])
       .index("by_invitee", ["inviteeId"]),
 
+    /**
+     * Anonymous referral-link visits. One row per browser session and code,
+     * so sellers can see link activity without collecting visitor PII.
+     */
+    referralVisits: defineTable({
+      inviterId: v.id("users"),
+      code: v.string(),
+      visitorKey: v.string(),
+      source: v.optional(v.string()),
+    })
+      .index("by_inviter", ["inviterId"])
+      .index("by_code_visitor", ["code", "visitorKey"]),
+
     /** Buyer reports on listings, reviewed by moderators. */
     reports: defineTable({
       productId: v.id("products"),

@@ -11,6 +11,8 @@ const columns = [
       { to: "/products", label: "Browse products" },
       { to: "/?view=categories", label: "Categories" },
       { to: "/sell", label: "Start selling" },
+      { to: "/sell/guide", label: "First-listing guide" },
+      { to: "/founding-sellers", label: "Founding Sellers" },
       { to: "/sell#fees", label: "Fees & payouts" },
       { to: "/events", label: "Seller events" },
       { to: "/pricing", label: "Plans & pricing" },

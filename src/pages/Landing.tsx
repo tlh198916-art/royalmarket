@@ -525,6 +525,20 @@ export default function Landing() {
                   <ArrowRight className="ml-2 size-4" />
                 </Link>
               </Button>
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                <Link
+                  to="/founding-sellers"
+                  className="font-medium text-primary hover:underline"
+                >
+                  Join the Founding Sellers →
+                </Link>
+                <Link
+                  to="/sell/guide"
+                  className="font-medium text-muted-foreground hover:text-foreground"
+                >
+                  First-listing guide →
+                </Link>
+              </div>
             </motion.div>
 
             {/* Grow Your Small Business */}
