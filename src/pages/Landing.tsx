@@ -17,6 +17,7 @@ import {
   BadgeCheck,
   Camera,
   Eye,
+  Handshake,
   HeartHandshake,
   LayoutGrid,
   LifeBuoy,
@@ -59,6 +60,24 @@ const steps = [
     icon: Wallet,
     title: "Receive payments",
     body: "Buyers pay on delivery at handoff — you collect directly from the buyer and keep 100% of the sale at launch.",
+  },
+];
+
+const buyerSteps = [
+  {
+    icon: PackageSearch,
+    title: "Find something real",
+    body: "Search by keyword or browse a category. Every result is a live listing from a verified seller.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Check before checkout",
+    body: "See the exact condition, remaining stock, return window, and pickup or shipping options upfront.",
+  },
+  {
+    icon: Handshake,
+    title: "Pay at handoff",
+    body: "Agree on pickup or delivery with the seller, inspect the item, then pay on delivery. No card details online.",
   },
 ];
 
@@ -218,14 +237,14 @@ export default function Landing() {
               description="Featured picks are drawn from real listings. As soon as sellers publish and shoppers browse, the top items show up right here."
               action={
                 <Button asChild>
-                  <Link to="/sell">
-                    <Tag className="mr-2 size-4" /> List the first item
-                  </Link>
+                  <Link to="/products">Browse the catalog</Link>
                 </Button>
               }
               secondaryAction={
                 <Button asChild variant="outline">
-                  <Link to="/products">Browse the catalog</Link>
+                  <Link to="/sell">
+                    <Tag className="mr-2 size-4" /> List the first item
+                  </Link>
                 </Button>
               }
             />
@@ -253,7 +272,7 @@ export default function Landing() {
             </div>
             <Link
               to="/products"
-              className="hidden text-sm font-medium text-primary transition-colors hover:text-primary/80 sm:block"
+              className="shrink-0 text-sm font-medium text-primary transition-colors hover:text-primary/80"
             >
               View all products →
             </Link>
@@ -281,6 +300,76 @@ export default function Landing() {
               </motion.div>
             ))}
           </div>
+
+          <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-border/70 pt-5">
+            <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Shop by budget
+            </span>
+            {[
+              { label: "Under $25", to: "/products?max=25" },
+              { label: "$25–$100", to: "/products?min=25&max=100" },
+              { label: "$100–$250", to: "/products?min=100&max=250" },
+              { label: "$250+", to: "/products?min=250" },
+            ].map((range) => (
+              <Link
+                key={range.label}
+                to={range.to}
+                className="rounded-full border border-border/80 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+              >
+                {range.label}
+              </Link>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Buyer path */}
+      <section className="border-b border-border/70 py-12 sm:py-16">
+        <div className="page-container">
+          <motion.div
+            {...fadeUp}
+            className="overflow-hidden rounded-3xl border border-primary/25 bg-gradient-to-br from-primary/10 via-card to-card"
+          >
+            <div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-[1fr_1.15fr] lg:items-center lg:p-10">
+              <div>
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-primary">
+                  <PackageSearch className="size-3.5" /> Buying on Royalmarket
+                </span>
+                <h2 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
+                  Find something real. Pay when it&apos;s in your hands.
+                </h2>
+                <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                  Browse live listings from verified sellers, check the exact
+                  condition and stock, and agree on pickup or delivery before
+                  handoff. No card details are taken online.
+                </p>
+                <Button asChild size="lg" className="mt-6">
+                  <Link to="/products">
+                    Browse all listings <ArrowRight className="ml-2 size-4" />
+                  </Link>
+                </Button>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {buyerSteps.map((step, index) => (
+                  <div
+                    key={step.title}
+                    className="rounded-2xl border border-border/70 bg-background/50 p-4"
+                  >
+                    <step.icon className="size-5 text-primary" />
+                    <p className="mt-3 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                      Step {index + 1}
+                    </p>
+                    <h3 className="mt-1 text-sm font-semibold tracking-tight">
+                      {step.title}
+                    </h3>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {step.body}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
         </div>
       </section>
 
@@ -315,9 +404,14 @@ export default function Landing() {
             <EmptyState
               icon={LayoutGrid}
               title="No listings yet"
-              description="This marketplace starts empty on purpose — you're looking at real inventory only. Be the first seller to publish a listing."
+              description="This marketplace shows real inventory only. Browse the catalog categories while sellers publish the first items — or be the first seller."
               action={
                 <Button asChild>
+                  <Link to="/products">Browse the catalog</Link>
+                </Button>
+              }
+              secondaryAction={
+                <Button asChild variant="outline">
                   <Link to="/sell">Start selling</Link>
                 </Button>
               }

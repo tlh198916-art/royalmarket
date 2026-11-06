@@ -9,7 +9,7 @@ const columns = [
     heading: "Marketplace",
     links: [
       { to: "/products", label: "Browse products" },
-      { to: "/?view=categories", label: "Categories" },
+      { to: "/products", label: "Browse categories" },
       { to: "/sell", label: "Start selling" },
       { to: "/sell/guide", label: "First-listing guide" },
       { to: "/founding-sellers", label: "Founding Sellers" },

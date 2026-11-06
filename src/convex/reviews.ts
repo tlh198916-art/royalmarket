@@ -60,16 +60,16 @@ export const viewerState = query({
       .withIndex("by_reviewer", (s) => s.eq("reviewerId", userId))
       .take(200);
     const hasReviewed = existing.some((r) => r.productId === productId);
-    const verifiedBuyer = await hasPurchase(ctx, userId, productId);
+    const verifiedBuyer = await hasDeliveredPurchase(ctx, userId, productId);
     return {
-      canReview: !hasReviewed,
+      canReview: !hasReviewed && verifiedBuyer,
       hasReviewed,
       verifiedBuyer,
     };
   },
 });
 
-async function hasPurchase(
+async function hasDeliveredPurchase(
   ctx: QueryCtx,
   userId: Doc<"users">["_id"],
   productId: Doc<"products">["_id"],
@@ -79,7 +79,7 @@ async function hasPurchase(
     .withIndex("by_buyer", (s) => s.eq("buyerId", userId))
     .take(300);
   return items.some(
-    (item) => item.productId === productId && item.status !== "cancelled",
+    (item) => item.productId === productId && item.status === "delivered",
   );
 }
 
@@ -93,8 +93,8 @@ export const create = mutation({
     const user = await requireVerifiedUser(ctx);
     const product = await ctx.db.get(args.productId);
     if (!product) throw new Error("This listing no longer exists.");
-    if (product.status === "draft")
-      throw new Error("You cannot review a draft listing.");
+    if (product.status === "draft" || product.status === "removed")
+      throw new Error("You cannot review an unavailable listing.");
 
     const rating = Math.round(args.rating);
     if (rating < 1 || rating > 5)
@@ -113,13 +113,20 @@ export const create = mutation({
       throw new Error("You have already reviewed this listing.");
     }
 
-    const verified = await hasPurchase(ctx, user._id, args.productId);
+    // Only buyers whose order was actually delivered can rate the listing.
+    // This keeps the public rating honest and matches the review link shown
+    // on delivered order items.
+    const verified = await hasDeliveredPurchase(ctx, user._id, args.productId);
+    if (!verified)
+      throw new Error(
+        "Reviews are open to buyers after delivery. Once your order is marked delivered, you can review it from your orders page.",
+      );
     await ctx.db.insert("reviews", {
       productId: args.productId,
       reviewerId: user._id,
       rating,
       comment,
-      verifiedPurchase: verified,
+      verifiedPurchase: true,
     });
 
     // Keep the listing's denormalized aggregates in sync so catalog rating

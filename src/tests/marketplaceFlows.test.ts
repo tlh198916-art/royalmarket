@@ -112,6 +112,9 @@ describe("listing privacy and permissions", () => {
     expect(await t.query(api.products.get, { id: draft })).toBeNull();
     expect(await t.query(api.products.get, { id: removed })).toBeNull();
     expect(await as(t, visitor).query(api.products.get, { id: draft })).toBeNull();
+    expect(
+      await t.query(api.products.getByIds, { ids: [draft, removed] }),
+    ).toHaveLength(0);
 
     const ownerDraft = await as(t, owner).query(api.products.get, { id: draft });
     expect(ownerDraft?.status).toBe("draft");

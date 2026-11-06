@@ -397,7 +397,15 @@ export const getByIds = query({
     const docs = await Promise.all(ids.map((id) => ctx.db.get(id)));
     const products = docs.filter((p): p is Doc<"products"> => p !== null);
     const publicProducts = await excludeInternalTestListings(ctx, products);
-    return await Promise.all(publicProducts.map((p) => enrich(ctx, p)));
+    // This is a public bulk lookup (cart/recently viewed), so it must obey the
+    // same visibility rule as the catalog: drafts, paused and removed listings
+    // are never exposed just because a caller knows their id. Active sold-out
+    // listings stay visible so checkout can explain the stock issue.
+    return await Promise.all(
+      publicProducts
+        .filter((product) => product.status === "active")
+        .map((product) => enrich(ctx, product)),
+    );
   },
 });
 

@@ -80,6 +80,49 @@ async function insertProduct(
   );
 }
 
+/** A delivered order is the only thing that makes a review eligible. */
+async function insertDeliveredOrder(
+  t: TestT,
+  buyerId: Id<"users">,
+  sellerId: Id<"users">,
+  productId: Id<"products">,
+) {
+  const now = Date.now();
+  return await t.run(async (ctx) => {
+    const orderId = await ctx.db.insert("orders", {
+      buyerId,
+      items: [
+        {
+          productId,
+          sellerId,
+          title: "Handmade ceramic mug",
+          priceCents: 5_000,
+          quantity: 1,
+        },
+      ],
+      subtotalCents: 5_000,
+      totalCents: 5_000,
+      status: "delivered",
+      paymentMethod: "cod",
+      placedAt: now,
+      deliveredAt: now,
+    });
+    await ctx.db.insert("orderItems", {
+      orderId,
+      buyerId,
+      sellerId,
+      productId,
+      title: "Handmade ceramic mug",
+      priceCents: 5_000,
+      quantity: 1,
+      status: "delivered",
+      paymentStatus: "paid",
+      paidAt: now,
+    });
+    return orderId;
+  });
+}
+
 describe("catalog discovery", () => {
   test("filters by price range, condition and minimum rating", async () => {
     const t = createTest();
@@ -191,6 +234,16 @@ describe("ratings and storefront reviews", () => {
     const buyer = await newUser(t);
     const product = await insertProduct(t, seller);
 
+    await expect(
+      as(t, buyer).mutation(api.reviews.create, {
+        productId: product,
+        rating: 5,
+        comment: "Exactly as described and packed carefully.",
+      }),
+    ).rejects.toThrow(/after delivery/i);
+
+    await insertDeliveredOrder(t, buyer, seller, product);
+
     await as(t, buyer).mutation(api.reviews.create, {
       productId: product,
       rating: 5,
@@ -227,6 +280,7 @@ describe("ratings and storefront reviews", () => {
     const seller = await newUser(t, { seller: true });
     const buyer = await newUser(t);
     const product = await insertProduct(t, seller, { title: "Glazed mug" });
+    await insertDeliveredOrder(t, buyer, seller, product);
     await as(t, buyer).mutation(api.reviews.create, {
       productId: product,
       rating: 4,
@@ -243,7 +297,7 @@ describe("ratings and storefront reviews", () => {
     expect(profile?.recentReviews).toHaveLength(1);
     expect(profile?.recentReviews[0].comment).toContain("Lovely glaze");
     expect(profile?.recentReviews[0].productTitle).toBe("Glazed mug");
-    expect(profile?.completedSales).toBe(0);
+    expect(profile?.completedSales).toBe(1);
   });
 });
 

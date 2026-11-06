@@ -80,14 +80,29 @@ class RootErrorBoundary extends React.Component<
       return (
         <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-6">
           <div className="max-w-lg text-center">
-            <p className="text-sm font-semibold">Preview runtime error</p>
-            <p className="mt-2 text-xs text-muted-foreground break-words">
-              {this.state.message}
+            <p className="text-lg font-bold tracking-tight">
+              Something went wrong
             </p>
-            {this.state.stack && (
-              <pre className="mt-3 text-left text-[10px] leading-4 text-muted-foreground/80 max-h-40 overflow-auto rounded border border-border/60 p-2">
-                {this.state.stack}
-              </pre>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              We couldn&apos;t load this page. Reload to try again — your cart
+              and account are still safe.
+            </p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              Reload page
+            </button>
+            {import.meta.env.DEV && this.state.stack && (
+              <details className="mt-5 text-left">
+                <summary className="cursor-pointer text-xs text-muted-foreground">
+                  Technical details (development only)
+                </summary>
+                <pre className="mt-2 max-h-40 overflow-auto rounded border border-border/60 p-2 text-[10px] leading-4 text-muted-foreground/80">
+                  {this.state.message}\n\n{this.state.stack}
+                </pre>
+              </details>
             )}
           </div>
         </div>

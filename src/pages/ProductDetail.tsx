@@ -716,9 +716,16 @@ export default function ProductDetail() {
                     </Link>
                   </Button>
                 </div>
-              ) : viewer?.hasReviewed ? (
+              ) : viewer === undefined ? (
+                <p className="mt-3 text-sm text-muted-foreground">Loading…</p>
+              ) : viewer.hasReviewed ? (
                 <p className="mt-3 text-sm leading-6 text-muted-foreground">
                   You&apos;ve already reviewed this listing. Thanks!
+                </p>
+              ) : !viewer.verifiedBuyer ? (
+                <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                  Reviews are open to buyers after delivery. Once your order is
+                  marked delivered, you can review it from your orders page.
                 </p>
               ) : (
                 <form onSubmit={handleReviewSubmit} className="mt-3 space-y-3">
@@ -750,12 +757,10 @@ export default function ProductDetail() {
                     minLength={3}
                     maxLength={2000}
                   />
-                  {viewer?.verifiedBuyer && (
-                    <p className="flex items-center gap-1.5 text-xs text-emerald-400">
-                      <ShieldCheck className="size-3.5" /> You&apos;ll get a
-                      “Verified purchase” badge
-                    </p>
-                  )}
+                  <p className="flex items-center gap-1.5 text-xs text-emerald-400">
+                    <ShieldCheck className="size-3.5" /> Verified purchase —
+                    your order was delivered
+                  </p>
                   <Button
                     type="submit"
                     className="w-full"
