@@ -1,0 +1,1 @@
+const n="https://royalmarket.freebuff.app";function t(r){return null}function i(){const r=t();return r||n}function e(r){return/^https?:\/\//i.test(r)?r:`${i()}${r.startsWith("/")?r:`/${r}`}`}export{e as a};
